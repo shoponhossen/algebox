@@ -72,8 +72,8 @@ fun MathEquationCanvas(
     modifier: Modifier = Modifier
 ) {
     val isFocusedEquation = cursor?.equationIndex == equationIndex
-    val activeSlotId = if (isFocusedEquation) cursor?.slotId else null
-    val activeIndex = if (isFocusedEquation) cursor?.indexInSlot else null
+    val activeSlotId = if (isFocusedEquation) cursor.slotId else null
+    val activeIndex = if (isFocusedEquation) cursor.indexInSlot else null
 
     val infiniteTransition = rememberInfiniteTransition(label = "caret_blink")
     val caretAlpha by infiniteTransition.animateFloat(
