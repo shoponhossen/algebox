@@ -1,0 +1,6 @@
+{
+  "name": "AlgeBox",
+  "description": "Visual textbook-style Algebra Solver with tappable placeholder boxes for powers, roots, logs, fractions, and multi-variable equations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

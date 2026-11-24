@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">AlgeBox</string>
+    <string name="app_subtitle">Visual Algebra Solver</string>
+    <string name="equation_label">Equation %1$d</string>
+    <string name="add_equation">Add Equation %1$d</string>
+    <string name="remove_equation">Remove Equation %1$d</string>
+    <string name="solve_button">Solve</string>
+    <string name="clear_all">Clear</string>
+    <string name="examples_button">Examples</string>
+    <string name="hide_keyboard">Hide Keyboard</string>
+    <string name="show_keyboard">Show Keyboard</string>
+    <string name="next_box">Next Box</string>
+    <string name="solution_title">Solution</string>
+    <string name="steps_title">Step-by-Step</string>
+    <string name="show_steps">Show Steps</string>
+    <string name="hide_steps">Hide Steps</string>
+    <string name="empty_hint">Tap a template below or enter an equation</string>
+    <string name="multi_var_prompt">You used %1$d variables (%2$s). Add %3$d more equation(s) to solve.</string>
+    <string name="multi_var_ready">%1$d-variable system (%2$s) ready</string>
+    <string name="placeholder_box_desc">Empty math placeholder box</string>
+</resources>
