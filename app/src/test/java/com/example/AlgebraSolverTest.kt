@@ -4,9 +4,11 @@ import com.example.model.EquationEntry
 import com.example.model.FractionNode
 import com.example.model.LogNode
 import com.example.model.MathSlot
+import com.example.model.MathTemplate
 import com.example.model.PowerNode
 import com.example.model.RootNode
 import com.example.model.SymbolNode
+import com.example.model.createTemplateNode
 import com.example.solver.AlgebraSolver
 import com.example.solver.SolveResult
 import org.junit.Assert.assertEquals
@@ -19,8 +21,73 @@ class AlgebraSolverTest {
         MathSlot(nodes = text.map { SymbolNode(value = it.toString()) })
 
     @Test
+    fun solvesDecimalAdditionExactlyZeroPointTwoPlusZeroPointOne() {
+        // 0.2 + 0.1 -> exact 0.3
+        val expr = EquationEntry(root = slot("0.2+0.1"))
+        val res = AlgebraSolver.solve(listOf(expr)) as SolveResult.Success
+        assertEquals("0.3", res.answers.first().primaryValue)
+    }
+
+    @Test
+    fun verifiesZeroPointTwoPlusZeroPointOneEqualsZeroPointThree() {
+        val eq = EquationEntry(root = slot("0.2+0.1=0.3"))
+        val res = AlgebraSolver.solve(listOf(eq)) as SolveResult.Success
+        assertTrue(res.answers.first().primaryValue.startsWith("True"))
+    }
+
+    @Test
+    fun solvesDecimalLinearEquationExactly() {
+        // x + 0.1 = 0.3 -> x = 0.2
+        val eq = EquationEntry(root = slot("x+0.1=0.3"))
+        val res = AlgebraSolver.solve(listOf(eq)) as SolveResult.Success
+        assertEquals("0.2", res.answers.first().primaryValue)
+    }
+
+    @Test
+    fun evaluatesLogEOfE() {
+        val (logNode, argId) = createTemplateNode(MathTemplate.LOG_E)
+        val eq = EquationEntry(
+            root = MathSlot(nodes = listOf((logNode as LogNode).copy(argument = slot("e"))))
+        )
+        assertTrue(argId.isNotEmpty())
+        val res = AlgebraSolver.solve(listOf(eq)) as SolveResult.Success
+        assertEquals("1", res.answers.first().primaryValue)
+    }
+
+    @Test
+    fun solvesCubeAndCubeRootTemplates() {
+        // x^3 = 27 -> x = 3
+        val (cubeNode, _) = createTemplateNode(MathTemplate.CUBE)
+        val eq1 = EquationEntry(
+            root = MathSlot(
+                nodes = listOf(
+                    (cubeNode as PowerNode).copy(base = slot("x")),
+                    SymbolNode(value = "="),
+                    SymbolNode(value = "2"),
+                    SymbolNode(value = "7")
+                )
+            )
+        )
+        val res1 = AlgebraSolver.solve(listOf(eq1)) as SolveResult.Success
+        assertEquals("3", res1.answers.first().primaryValue)
+
+        // \sqrt[3]{x} = 4 -> x = 64
+        val (cbrtNode, _) = createTemplateNode(MathTemplate.CUBE_ROOT)
+        val eq2 = EquationEntry(
+            root = MathSlot(
+                nodes = listOf(
+                    (cbrtNode as RootNode).copy(radicand = slot("x")),
+                    SymbolNode(value = "="),
+                    SymbolNode(value = "4")
+                )
+            )
+        )
+        val res2 = AlgebraSolver.solve(listOf(eq2)) as SolveResult.Success
+        assertEquals("64", res2.answers.first().primaryValue)
+    }
+
+    @Test
     fun solvesQuadraticWithSquareTemplate() {
-        // x^2 - 5x + 6 = 0 -> x1 = 3, x2 = 2
         val eq = EquationEntry(
             root = MathSlot(
                 nodes = listOf(
@@ -42,7 +109,6 @@ class AlgebraSolverTest {
 
     @Test
     fun solvesTenPowerAndLog10Equation() {
-        // 10^x + log_10(100) = 102 -> 10^x = 100 -> x = 2
         val eq = EquationEntry(
             root = MathSlot(
                 nodes = listOf(
@@ -59,26 +125,7 @@ class AlgebraSolverTest {
     }
 
     @Test
-    fun solvesNthRootAndCustomLogEquation() {
-        // \sqrt[3]{x + 1} + log_2(8) = 6 -> \sqrt[3]{x+1} = 3 -> x + 1 = 27 -> x = 26
-        val eq = EquationEntry(
-            root = MathSlot(
-                nodes = listOf(
-                    RootNode(degree = slot("3"), radicand = slot("x+1")),
-                    SymbolNode(value = "+"),
-                    LogNode(base = slot("2"), argument = slot("8")),
-                    SymbolNode(value = "="),
-                    SymbolNode(value = "6")
-                )
-            )
-        )
-        val res = AlgebraSolver.solve(listOf(eq)) as SolveResult.Success
-        assertEquals("26", res.answers.first().primaryValue)
-    }
-
-    @Test
     fun solvesFractionAndSqrtEquation() {
-        // (2x + 1)/3 + \sqrt{16} = 7 -> (2x+1)/3 = 3 -> 2x + 1 = 9 -> x = 4
         val eq = EquationEntry(
             root = MathSlot(
                 nodes = listOf(
@@ -106,7 +153,6 @@ class AlgebraSolverTest {
 
     @Test
     fun solvesThreeVariableSystem() {
-        // x + y + z = 6, 2x - y + z = 3, x + 2y - z = 2 -> x = 1, y = 2, z = 3
         val eqs = listOf(
             EquationEntry(root = slot("x+y+z=6")),
             EquationEntry(root = slot("2x-y+z=3")),

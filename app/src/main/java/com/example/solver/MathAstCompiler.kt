@@ -9,7 +9,9 @@ import com.example.model.RootNode
 import com.example.model.SymbolNode
 import com.example.model.findFirstEmptySlotId
 import com.example.model.toReadableString
+import java.math.BigDecimal
 import java.math.BigInteger
+import java.math.MathContext
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.pow
@@ -43,6 +45,24 @@ data class Rational(val num: BigInteger, val den: BigInteger) {
 
     fun toDouble(): Double = num.toDouble() / den.toDouble()
 
+    /**
+     * Returns an exact BigDecimal if this fraction terminates in base 10
+     * (i.e., denominator only has prime factors 2 and 5), or null otherwise.
+     */
+    fun toTerminatingDecimal(): BigDecimal? {
+        if (num == BigInteger.ZERO) return BigDecimal.ZERO
+        if (den == BigInteger.ONE) return BigDecimal(num)
+        var d = den
+        val two = BigInteger.valueOf(2)
+        val five = BigInteger.valueOf(5)
+        while (d.mod(two) == BigInteger.ZERO) d = d.divide(two)
+        while (d.mod(five) == BigInteger.ZERO) d = d.divide(five)
+        if (d != BigInteger.ONE) return null
+        return BigDecimal(num).divide(BigDecimal(den))
+    }
+
+    fun formatDecimalClean(): String? = toTerminatingDecimal()?.stripTrailingZeros()?.toPlainString()
+
     fun format(): String = if (den == BigInteger.ONE) num.toString() else "$num/$den"
 
     companion object {
@@ -72,7 +92,7 @@ data class Rational(val num: BigInteger, val den: BigInteger) {
                 } else {
                     val intPart = if (parts[0].isEmpty()) "0" else parts[0]
                     val fracPart = parts[1]
-                    if (fracPart.length > 9) return null
+                    if (fracPart.length > 18) return null
                     val scale = BigInteger.TEN.pow(fracPart.length)
                     val combined = BigInteger(intPart) * scale + BigInteger(if (fracPart.isEmpty()) "0" else fracPart)
                     create(combined, scale)
@@ -85,7 +105,13 @@ data class Rational(val num: BigInteger, val den: BigInteger) {
 }
 
 sealed interface Expr {
-    data class Const(val value: Double, val rational: Rational? = null) : Expr
+    data class Const(
+        val value: Double,
+        val rational: Rational? = null,
+        val decimal: BigDecimal? = null,
+        val symbolName: String? = null,
+        val fromDecimalLiteral: Boolean = false
+    ) : Expr
     data class Var(val name: String) : Expr
     data class Neg(val inner: Expr) : Expr
     data class Add(val left: Expr, val right: Expr) : Expr
@@ -201,6 +227,19 @@ object MathAstCompiler {
                         v in setOf("x", "y", "z") -> {
                             flushNumber()
                             tokens.add(Token.Variable(v))
+                        }
+                        v == "e" -> {
+                            flushNumber()
+                            tokens.add(
+                                Token.Embedded(
+                                    Expr.Const(
+                                        value = Math.E,
+                                        rational = null,
+                                        decimal = BigDecimal.valueOf(Math.E),
+                                        symbolName = "e"
+                                    )
+                                )
+                            )
                         }
                         v == "+" -> {
                             flushNumber()
@@ -340,9 +379,20 @@ object MathAstCompiler {
             return when (val tok = tokens[pos]) {
                 is Token.Num -> {
                     pos++
-                    val d = tok.text.toDoubleOrNull()
+                    val normalizedText = if (tok.text.startsWith(".")) "0${tok.text}" else tok.text
+                    val d = normalizedText.toDoubleOrNull()
                         ?: throw CompileException("Invalid number '${tok.text}'.")
-                    Expr.Const(d, Rational.parseDecimal(tok.text))
+                    val bd = try {
+                        BigDecimal(normalizedText, MathContext.DECIMAL128)
+                    } catch (_: NumberFormatException) {
+                        null
+                    }
+                    Expr.Const(
+                        value = d,
+                        rational = Rational.parseDecimal(normalizedText),
+                        decimal = bd,
+                        fromDecimalLiteral = normalizedText.contains('.')
+                    )
                 }
                 is Token.Variable -> {
                     pos++
@@ -369,6 +419,19 @@ object MathAstCompiler {
 
     private fun formatNodeList(nodes: List<MathNode>): String =
         MathSlot(nodes = nodes).toReadableString()
+}
+
+fun Expr.containsDecimalLiteral(): Boolean = when (this) {
+    is Expr.Const -> fromDecimalLiteral
+    is Expr.Var -> false
+    is Expr.Neg -> inner.containsDecimalLiteral()
+    is Expr.Add -> left.containsDecimalLiteral() || right.containsDecimalLiteral()
+    is Expr.Sub -> left.containsDecimalLiteral() || right.containsDecimalLiteral()
+    is Expr.Mul -> left.containsDecimalLiteral() || right.containsDecimalLiteral()
+    is Expr.Div -> left.containsDecimalLiteral() || right.containsDecimalLiteral()
+    is Expr.Pow -> base.containsDecimalLiteral() || exp.containsDecimalLiteral()
+    is Expr.Log -> base.containsDecimalLiteral() || arg.containsDecimalLiteral()
+    is Expr.Root -> (degree?.containsDecimalLiteral() ?: false) || radicand.containsDecimalLiteral()
 }
 
 fun Expr.variables(): Set<String> {
@@ -455,7 +518,7 @@ fun Expr.evaluateDouble(env: Map<String, Double> = emptyMap()): Double {
 }
 
 fun Expr.toMathText(): String = when (this) {
-    is Expr.Const -> rational?.format() ?: formatNumber(value)
+    is Expr.Const -> symbolName ?: decimal?.stripTrailingZeros()?.toPlainString() ?: rational?.format() ?: formatNumber(value)
     is Expr.Var -> name
     is Expr.Neg -> "-${wrapIfCompound(inner)}"
     is Expr.Add -> "${left.toMathText()} + ${right.toMathText()}"
@@ -480,12 +543,14 @@ private fun wrapIfCompound(e: Expr): String = when (e) {
 fun formatNumber(d: Double): String {
     if (d.isNaN()) return "Undefined"
     if (d.isInfinite()) return if (d > 0) "∞" else "-∞"
-    val clean = if (abs(d) < 1e-10) 0.0 else d
+    val clean = if (abs(d) < 1e-11) 0.0 else d
     val roundedLong = clean.roundToLong()
-    if (abs(clean - roundedLong.toDouble()) < 1e-9 && abs(clean) < 1e14) {
+    if (abs(clean - roundedLong.toDouble()) < 1e-10 && abs(clean) < 1e14) {
         return roundedLong.toString()
     }
-    return String.format(java.util.Locale.US, "%.6f", clean)
-        .trimEnd('0')
-        .trimEnd('.')
+    // Use BigDecimal.valueOf(clean) only after rounding tiny IEEE-754 noise at 10 decimal digits
+    return BigDecimal.valueOf(clean)
+        .round(MathContext(10))
+        .stripTrailingZeros()
+        .toPlainString()
 }

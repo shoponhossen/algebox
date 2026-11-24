@@ -5,10 +5,13 @@ import java.util.UUID
 enum class MathTemplate {
     POWER,       // []^[]
     SQUARE,      // []^2
+    CUBE,        // []^3
     TEN_POWER,   // 10^[]
     LOG_ANY,     // log_[] []
     LOG_10,      // log_10 []
+    LOG_E,       // log_e []
     SQRT,        // \sqrt{[]}
+    CUBE_ROOT,   // \sqrt[3]{[]}
     NTH_ROOT,    // \[]roott{[]}
     FRACTION     // []/[]
 }
@@ -227,6 +230,7 @@ fun MathSlot.toReadableString(): String {
                     val e = node.exponent.toReadableString()
                     val wrappedBase = if (node.base.nodes.size > 1) "($b)" else b
                     if (e == "2") append("$wrappedBase²")
+                    else if (e == "3") append("$wrappedBase³")
                     else append("$wrappedBase^($e)")
                 }
                 is LogNode -> {
@@ -266,6 +270,11 @@ fun createTemplateNode(template: MathTemplate): Pair<MathNode, String> {
             val expSlot = MathSlot(nodes = listOf(SymbolNode(value = "2")))
             PowerNode(base = baseSlot, exponent = expSlot) to baseSlot.id
         }
+        MathTemplate.CUBE -> {
+            val baseSlot = MathSlot()
+            val expSlot = MathSlot(nodes = listOf(SymbolNode(value = "3")))
+            PowerNode(base = baseSlot, exponent = expSlot) to baseSlot.id
+        }
         MathTemplate.TEN_POWER -> {
             val baseSlot = MathSlot(nodes = listOf(SymbolNode(value = "1"), SymbolNode(value = "0")))
             val expSlot = MathSlot()
@@ -281,9 +290,19 @@ fun createTemplateNode(template: MathTemplate): Pair<MathNode, String> {
             val argSlot = MathSlot()
             LogNode(base = baseSlot, argument = argSlot) to argSlot.id
         }
+        MathTemplate.LOG_E -> {
+            val baseSlot = MathSlot(nodes = listOf(SymbolNode(value = "e")))
+            val argSlot = MathSlot()
+            LogNode(base = baseSlot, argument = argSlot) to argSlot.id
+        }
         MathTemplate.SQRT -> {
             val radSlot = MathSlot()
             RootNode(degree = null, radicand = radSlot) to radSlot.id
+        }
+        MathTemplate.CUBE_ROOT -> {
+            val degSlot = MathSlot(nodes = listOf(SymbolNode(value = "3")))
+            val radSlot = MathSlot()
+            RootNode(degree = degSlot, radicand = radSlot) to radSlot.id
         }
         MathTemplate.NTH_ROOT -> {
             val degSlot = MathSlot()

@@ -29,14 +29,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
@@ -95,7 +92,6 @@ fun AlgebraSolverScreen(
             val isWideScreen = maxWidth >= 840.dp
 
             if (isWideScreen) {
-                // Adaptive Two-Pane Layout for Tablets / Foldables
                 Row(modifier = Modifier.fillMaxSize()) {
                     Column(
                         modifier = Modifier
@@ -110,7 +106,6 @@ fun AlgebraSolverScreen(
                         )
                         WorkspaceScrollArea(
                             uiState = uiState,
-                            examples = viewModel.examples,
                             viewModel = viewModel,
                             modifier = Modifier.weight(1f)
                         )
@@ -137,7 +132,6 @@ fun AlgebraSolverScreen(
                     }
                 }
             } else {
-                // Compact Handheld Layout
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -152,7 +146,6 @@ fun AlgebraSolverScreen(
                     Box(modifier = Modifier.weight(1f)) {
                         WorkspaceScrollArea(
                             uiState = uiState,
-                            examples = viewModel.examples,
                             viewModel = viewModel,
                             modifier = Modifier.fillMaxSize()
                         )
@@ -309,7 +302,6 @@ private fun AlgeBoxTopBar(
 @Composable
 private fun WorkspaceScrollArea(
     uiState: AlgebraSolverUiState,
-    examples: List<AlgebraExample>,
     viewModel: AlgebraSolverViewModel,
     modifier: Modifier = Modifier
 ) {
@@ -318,43 +310,11 @@ private fun WorkspaceScrollArea(
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
-            top = 4.dp,
+            top = 8.dp,
             bottom = if (uiState.isKeyboardVisible) 18.dp else 84.dp
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Quick Textbook Examples Strip
-        item(key = "examples_strip") {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.AutoAwesome,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Text(
-                        text = "Try an example",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(examples, key = { it.id }) { example ->
-                        ExampleChip(
-                            example = example,
-                            onClick = { viewModel.onLoadExample(example) }
-                        )
-                    }
-                }
-            }
-        }
-
         // Equation Input Cards
         items(uiState.equations.size, key = { idx -> uiState.equations[idx].id }) { index ->
             val equation = uiState.equations[index]
@@ -389,38 +349,6 @@ private fun WorkspaceScrollArea(
                     onToggleSteps = viewModel::onToggleSteps
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ExampleChip(
-    example: AlgebraExample,
-    onClick: () -> Unit
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        modifier = Modifier.testTag("example_chip_${example.id}")
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(
-                text = example.title,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = example.previewLabel,
-                fontFamily = MathMonoFont,
-                fontSize = 11.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
@@ -546,7 +474,6 @@ private fun EquationEditorCard(
                 }
             }
 
-            // Horizontally scrollable textbook equation canvas
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -661,7 +588,6 @@ private fun MultiVariableBanner(
             }
         }
     } else if (uiState.equations.size < 3) {
-        // Optional subtle "+ Add Equation" button for users starting a system manually
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End
@@ -703,7 +629,6 @@ private fun SolveResultSection(
     when (result) {
         is SolveResult.Success -> {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                // Solution Answer Card
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -783,7 +708,6 @@ private fun SolveResultSection(
                     }
                 }
 
-                // Step-by-Step Card
                 if (result.steps.isNotEmpty()) {
                     Card(
                         modifier = Modifier

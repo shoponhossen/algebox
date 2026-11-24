@@ -5,7 +5,9 @@ import com.example.model.extractVariables
 import com.example.model.findFirstEmptySlotId
 import com.example.model.isBlank
 import com.example.model.toReadableString
+import java.math.BigDecimal
 import java.math.BigInteger
+import java.math.MathContext
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.pow
@@ -46,44 +48,112 @@ sealed interface SolveResult {
     data class Error(val message: String) : SolveResult
 }
 
-private data class NumVal(val d: Double, val r: Rational? = null) {
-    operator fun plus(o: NumVal): NumVal =
-        NumVal(d + o.d, if (r != null && o.r != null) r + o.r else null)
+private val DEC_CTX = MathContext.DECIMAL128
 
-    operator fun minus(o: NumVal): NumVal =
-        NumVal(d - o.d, if (r != null && o.r != null) r - o.r else null)
-
-    operator fun times(o: NumVal): NumVal =
-        NumVal(d * o.d, if (r != null && o.r != null) r * o.r else null)
-
-    operator fun div(o: NumVal): NumVal? {
-        if (abs(o.d) < 1e-15) return null
-        val rat = if (r != null && o.r != null && !o.r.isZero()) r / o.r else null
-        return NumVal(d / o.d, rat)
+private data class NumVal(
+    val d: Double,
+    val r: Rational? = null,
+    val bd: BigDecimal? = null
+) {
+    operator fun plus(o: NumVal): NumVal {
+        val rat = if (r != null && o.r != null) r + o.r else null
+        val dec = rat?.toTerminatingDecimal() ?: if (bd != null && o.bd != null) bd.add(o.bd, DEC_CTX) else null
+        val dbl = dec?.toDouble() ?: (d + o.d)
+        return NumVal(dbl, rat, dec)
     }
 
-    operator fun unaryMinus(): NumVal = NumVal(-d, r?.unaryMinus())
+    operator fun minus(o: NumVal): NumVal {
+        val rat = if (r != null && o.r != null) r - o.r else null
+        val dec = rat?.toTerminatingDecimal() ?: if (bd != null && o.bd != null) bd.subtract(o.bd, DEC_CTX) else null
+        val dbl = dec?.toDouble() ?: (d - o.d)
+        return NumVal(dbl, rat, dec)
+    }
 
-    fun isZero(): Boolean = if (r != null) r.isZero() else abs(d) < 1e-10
-    fun isOne(): Boolean = if (r != null) r.isOne() else abs(d - 1.0) < 1e-10
+    operator fun times(o: NumVal): NumVal {
+        val rat = if (r != null && o.r != null) r * o.r else null
+        val dec = rat?.toTerminatingDecimal() ?: if (bd != null && o.bd != null) bd.multiply(o.bd, DEC_CTX) else null
+        val dbl = dec?.toDouble() ?: (d * o.d)
+        return NumVal(dbl, rat, dec)
+    }
 
-    fun formatExactAndApprox(): Pair<String, String?> {
-        if (r != null) {
-            val exact = r.format()
-            return if (r.isInteger()) {
-                exact to null
-            } else {
-                exact to "≈ ${formatNumber(d)}"
+    operator fun div(o: NumVal): NumVal? {
+        if (o.isZero()) return null
+        val rat = if (r != null && o.r != null && !o.r.isZero()) r / o.r else null
+        val dec = rat?.toTerminatingDecimal() ?: if (bd != null && o.bd != null && o.bd.compareTo(BigDecimal.ZERO) != 0) {
+            try {
+                bd.divide(o.bd, DEC_CTX)
+            } catch (_: ArithmeticException) {
+                null
             }
+        } else null
+        val dbl = dec?.toDouble() ?: (d / o.d)
+        return NumVal(dbl, rat, dec)
+    }
+
+    operator fun unaryMinus(): NumVal = NumVal(-d, r?.unaryMinus(), bd?.negate())
+
+    fun isZero(): Boolean = when {
+        r != null -> r.isZero()
+        bd != null -> bd.abs(DEC_CTX) < BigDecimal("1E-12")
+        else -> abs(d) < 1e-11
+    }
+
+    fun isOne(): Boolean = when {
+        r != null -> r.isOne()
+        bd != null -> bd.subtract(BigDecimal.ONE, DEC_CTX).abs(DEC_CTX) < BigDecimal("1E-12")
+        else -> abs(d - 1.0) < 1e-11
+    }
+
+    fun equalsValue(o: NumVal): Boolean = when {
+        r != null && o.r != null -> r == o.r
+        bd != null && o.bd != null -> bd.subtract(o.bd, DEC_CTX).abs(DEC_CTX) < BigDecimal("1E-10")
+        else -> abs(d - o.d) < 1e-9
+    }
+
+    fun formatExactAndApprox(preferDecimal: Boolean = false): Pair<String, String?> {
+        if (r != null) {
+            val termDec = r.formatDecimalClean()
+            val fracStr = r.format()
+            if (r.isInteger()) {
+                return fracStr to null
+            }
+            if (preferDecimal && termDec != null) {
+                return termDec to "fraction: $fracStr"
+            }
+            return if (termDec != null) {
+                fracStr to "= $termDec"
+            } else {
+                fracStr to "≈ ${formatNumber(d)}"
+            }
+        }
+        if (bd != null) {
+            val cleaned = bd.round(MathContext(12)).stripTrailingZeros().toPlainString()
+            return cleaned to null
         }
         return formatNumber(d) to null
     }
 
-    fun formatCompact(): String = r?.format() ?: formatNumber(d)
+    fun formatCompact(preferDecimal: Boolean = true): String {
+        if (r != null) {
+            if (r.isInteger()) return r.format()
+            val termDec = r.formatDecimalClean()
+            if (preferDecimal && termDec != null) return termDec
+            return r.format()
+        }
+        if (bd != null) {
+            return bd.round(MathContext(10)).stripTrailingZeros().toPlainString()
+        }
+        return formatNumber(d)
+    }
 
     companion object {
-        val ZERO = NumVal(0.0, Rational.ZERO)
-        val ONE = NumVal(1.0, Rational.ONE)
+        val ZERO = NumVal(0.0, Rational.ZERO, BigDecimal.ZERO)
+        val ONE = NumVal(1.0, Rational.ONE, BigDecimal.ONE)
+
+        fun fromExprConst(c: Expr.Const): NumVal {
+            val dec = c.rational?.toTerminatingDecimal() ?: c.decimal ?: BigDecimal.valueOf(c.value)
+            return NumVal(c.value, c.rational, dec)
+        }
     }
 }
 
@@ -93,7 +163,6 @@ private data class Poly2(val c2: NumVal, val c1: NumVal, val c0: NumVal) {
     operator fun unaryMinus() = Poly2(-c2, -c1, -c0)
 
     fun mul(o: Poly2): Poly2? {
-        // Degree check: result must have degree <= 2
         if (!c2.isZero() && (!o.c2.isZero() || !o.c1.isZero())) return null
         if (!c1.isZero() && !o.c2.isZero()) return null
         val n2 = c2 * o.c0 + c1 * o.c1 + c0 * o.c2
@@ -101,8 +170,6 @@ private data class Poly2(val c2: NumVal, val c1: NumVal, val c0: NumVal) {
         val n0 = c0 * o.c0
         return Poly2(n2, n1, n0)
     }
-
-    fun isConst(): Boolean = c2.isZero() && c1.isZero()
 }
 
 private data class LinearExpr(val coeffs: List<NumVal>, val constant: NumVal) {
@@ -131,7 +198,6 @@ object AlgebraSolver {
             return SolveResult.Error("Enter an expression or equation using the keypad.")
         }
 
-        // 1. Check for empty [ ] placeholder boxes in any non-blank equation
         for (idx in equations.indices) {
             val eq = equations[idx]
             if (!eq.root.isBlank()) {
@@ -146,14 +212,12 @@ object AlgebraSolver {
             }
         }
 
-        // 2. Collect all distinct variables across active equations
         val allVars = linkedSetOf<String>()
         for (eq in nonBlankEquations) {
             allVars.addAll(eq.root.extractVariables())
         }
         val orderedVars = listOf("x", "y", "z").filter { it in allVars }
 
-        // 3. Enforce multi-variable equation count rule
         if (orderedVars.size >= 2 && nonBlankEquations.size < orderedVars.size) {
             return SolveResult.NeedsMoreEquations(
                 detectedVars = orderedVars,
@@ -162,14 +226,12 @@ object AlgebraSolver {
             )
         }
 
-        // 4. Compile ASTs
         val compiled = try {
             nonBlankEquations.map { MathAstCompiler.compileEquation(it.root) }
         } catch (e: CompileException) {
             return SolveResult.Error(e.message ?: "Invalid mathematical expression.")
         }
 
-        // 5. Dispatch based on variable count and equation count
         return when {
             orderedVars.isEmpty() -> solveNumericOrVerify(compiled)
             orderedVars.size == 1 && compiled.size == 1 -> {
@@ -180,7 +242,7 @@ object AlgebraSolver {
                 }
             }
             orderedVars.size == 1 && compiled.size > 1 -> {
-                SolveResult.Error("Multiple equations detected for a single variable '${orderedVars[0]}'. Keep only 1 equation or introduce another variable.")
+                SolveResult.Error("Multiple equations detected for a single variable '${orderedVars[0]}'. Keep only 1 equation or add another variable.")
             }
             else -> solveMultiVarSystem(compiled, nonBlankEquations, orderedVars)
         }
@@ -188,7 +250,7 @@ object AlgebraSolver {
 
     private fun evalConstant(expr: Expr): NumVal? {
         return when (expr) {
-            is Expr.Const -> NumVal(expr.value, expr.rational)
+            is Expr.Const -> NumVal.fromExprConst(expr)
             is Expr.Var -> null
             is Expr.Neg -> evalConstant(expr.inner)?.let { -it }
             is Expr.Add -> {
@@ -222,7 +284,17 @@ object AlgebraSolver {
                         rationalPow(b.r, expInt)
                     } else null
                 } else null
-                NumVal(d, rat)
+                val dec = rat?.toTerminatingDecimal() ?: if (b.bd != null && e.r != null && e.r.isInteger()) {
+                    val expInt = if (e.r.num.bitLength() <= 31) e.r.num.toInt() else null
+                    if (expInt != null && expInt in 0..12) {
+                        try {
+                            b.bd.pow(expInt, DEC_CTX)
+                        } catch (_: ArithmeticException) {
+                            null
+                        }
+                    } else null
+                } else null
+                NumVal(dec?.toDouble() ?: d, rat, dec)
             }
             is Expr.Log -> {
                 val b = evalConstant(expr.base) ?: return null
@@ -235,10 +307,13 @@ object AlgebraSolver {
                     val check = rationalPow(b.r, exactInt.toInt())
                     if (check == a.r) Rational.of(exactInt) else null
                 } else null
-                NumVal(d, rat)
+                val dec = rat?.toTerminatingDecimal() ?: if (abs(d - exactInt.toDouble()) < 1e-12) {
+                    BigDecimal.valueOf(exactInt)
+                } else null
+                NumVal(dec?.toDouble() ?: d, rat, dec)
             }
             is Expr.Root -> {
-                val nVal = expr.degree?.let { evalConstant(it) } ?: NumVal(2.0, Rational.of(2))
+                val nVal = expr.degree?.let { evalConstant(it) } ?: NumVal(2.0, Rational.of(2), BigDecimal.valueOf(2))
                 val rVal = evalConstant(expr.radicand) ?: return null
                 val d = Expr.Root(Expr.Const(nVal.d), Expr.Const(rVal.d)).evaluateDouble()
                 if (d.isNaN() || d.isInfinite()) return null
@@ -248,7 +323,8 @@ object AlgebraSolver {
                         exactRationalRoot(rVal.r, nInt)
                     } else null
                 } else null
-                NumVal(d, rat)
+                val dec = rat?.toTerminatingDecimal()
+                NumVal(dec?.toDouble() ?: d, rat, dec)
             }
         }
     }
@@ -298,257 +374,496 @@ object AlgebraSolver {
         }
         return when (val item = compiled[0]) {
             is CompiledEquation.Expression -> {
+                val preferDecimal = item.expr.containsDecimalLiteral()
                 val value = evalConstant(item.expr)
-                    ?: return SolveResult.Error("Expression is undefined (check division by zero, negative even roots, or log domain).")
-                val (primary, secondary) = value.formatExactAndApprox()
-                val steps = buildNumericSteps(item.expr, item.text, primary)
+                    ?: return SolveResult.Error("Expression is undefined (check division by zero, even root of a negative number, or log domain).")
+                val (primary, secondary) = value.formatExactAndApprox(preferDecimal)
+                val steps = buildBeginnerNumericSteps(item.expr, item.text, primary, preferDecimal)
                 SolveResult.Success(
-                    summaryTitle = "Evaluated Expression",
-                    answers = listOf(AnswerItem(label = "Result", primaryValue = primary, secondaryValue = secondary)),
+                    summaryTitle = "Calculated Result",
+                    answers = listOf(AnswerItem(label = "Answer", primaryValue = primary, secondaryValue = secondary)),
                     steps = steps
                 )
             }
             is CompiledEquation.Equation -> {
+                val preferDecimal = item.lhs.containsDecimalLiteral() || item.rhs.containsDecimalLiteral()
                 val lhsVal = evalConstant(item.lhs)
                     ?: return SolveResult.Error("Left side is undefined.")
                 val rhsVal = evalConstant(item.rhs)
                     ?: return SolveResult.Error("Right side is undefined.")
-                val isTrue = abs(lhsVal.d - rhsVal.d) < 1e-8
+                val isTrue = lhsVal.equalsValue(rhsVal)
+                val lhsStr = lhsVal.formatCompact(preferDecimal)
+                val rhsStr = rhsVal.formatCompact(preferDecimal)
                 SolveResult.Success(
-                    summaryTitle = if (isTrue) "Equation Identity" else "Equation Verification",
+                    summaryTitle = if (isTrue) "Both Sides Are Equal" else "Sides Are Not Equal",
                     answers = listOf(
                         AnswerItem(
-                            label = "Status",
-                            primaryValue = if (isTrue) "True (${lhsVal.formatCompact()} = ${rhsVal.formatCompact()})"
-                            else "False (${lhsVal.formatCompact()} ≠ ${rhsVal.formatCompact()})"
+                            label = "Check",
+                            primaryValue = if (isTrue) "True ($lhsStr = $rhsStr)" else "False ($lhsStr ≠ $rhsStr)"
                         )
                     ),
                     steps = listOf(
-                        SolutionStep(1, "Evaluate left side", "${item.lhsText} = ${lhsVal.formatCompact()}"),
-                        SolutionStep(2, "Evaluate right side", "${item.rhsText} = ${rhsVal.formatCompact()}"),
-                        SolutionStep(3, "Compare both sides", if (isTrue) "Both sides are equal." else "Both sides are not equal.")
+                        SolutionStep(1, "Calculate the left side", "${item.lhsText} = $lhsStr"),
+                        SolutionStep(2, "Calculate the right side", "${item.rhsText} = $rhsStr"),
+                        SolutionStep(
+                            3,
+                            "Compare the two values",
+                            if (isTrue) "$lhsStr matches $rhsStr, so the statement is True ✓"
+                            else "$lhsStr does not equal $rhsStr, so the statement is False ✗"
+                        )
                     )
                 )
             }
         }
     }
 
-    private fun buildNumericSteps(expr: Expr, originalText: String, finalText: String): List<SolutionStep> {
+    private fun buildBeginnerNumericSteps(
+        expr: Expr,
+        originalText: String,
+        finalText: String,
+        preferDecimal: Boolean
+    ): List<SolutionStep> {
         val steps = mutableListOf<SolutionStep>()
-        steps.add(SolutionStep(1, "Original expression", originalText))
-        val subNotes = mutableListOf<String>()
-        fun collectSubEvaluations(e: Expr) {
+        steps.add(SolutionStep(1, "Write down the expression", originalText))
+
+        val specialSubs = mutableListOf<String>()
+        val mulDivSubs = mutableListOf<String>()
+
+        fun walkSpecial(e: Expr) {
             when (e) {
-                is Expr.Pow -> evalConstant(e)?.let { subNotes.add("${e.toMathText()} = ${it.formatCompact()}") }
-                is Expr.Log -> evalConstant(e)?.let { subNotes.add("${e.toMathText()} = ${it.formatCompact()}") }
-                is Expr.Root -> evalConstant(e)?.let { subNotes.add("${e.toMathText()} = ${it.formatCompact()}") }
-                is Expr.Div -> if (e.left is Expr.Const && e.right is Expr.Const) {
-                    evalConstant(e)?.let { subNotes.add("${e.toMathText()} = ${it.formatCompact()}") }
-                } else {
-                    collectSubEvaluations(e.left); collectSubEvaluations(e.right)
+                is Expr.Pow, is Expr.Log, is Expr.Root -> {
+                    evalConstant(e)?.let {
+                        specialSubs.add("${e.toMathText()} = ${it.formatCompact(preferDecimal)}")
+                    }
                 }
-                is Expr.Add -> { collectSubEvaluations(e.left); collectSubEvaluations(e.right) }
-                is Expr.Sub -> { collectSubEvaluations(e.left); collectSubEvaluations(e.right) }
-                is Expr.Mul -> { collectSubEvaluations(e.left); collectSubEvaluations(e.right) }
-                is Expr.Neg -> collectSubEvaluations(e.inner)
+                is Expr.Div -> {
+                    if (e.left is Expr.Const && e.right is Expr.Const) {
+                        evalConstant(e)?.let {
+                            specialSubs.add("${e.toMathText()} = ${it.formatCompact(preferDecimal)}")
+                        }
+                    } else {
+                        walkSpecial(e.left)
+                        walkSpecial(e.right)
+                    }
+                }
+                is Expr.Mul -> {
+                    walkSpecial(e.left)
+                    walkSpecial(e.right)
+                    if (e.left !is Expr.Add && e.left !is Expr.Sub && e.right !is Expr.Add && e.right !is Expr.Sub) {
+                        evalConstant(e)?.let {
+                            val lTxt = evalConstant(e.left)?.formatCompact(preferDecimal) ?: e.left.toMathText()
+                            val rTxt = evalConstant(e.right)?.formatCompact(preferDecimal) ?: e.right.toMathText()
+                            mulDivSubs.add("$lTxt × $rTxt = ${it.formatCompact(preferDecimal)}")
+                        }
+                    }
+                }
+                is Expr.Add -> { walkSpecial(e.left); walkSpecial(e.right) }
+                is Expr.Sub -> { walkSpecial(e.left); walkSpecial(e.right) }
+                is Expr.Neg -> walkSpecial(e.inner)
                 else -> Unit
             }
         }
-        collectSubEvaluations(expr)
-        if (subNotes.isNotEmpty()) {
-            steps.add(SolutionStep(2, "Evaluate powers, roots, logs & fractions", subNotes.distinct().joinToString("\n")))
+        walkSpecial(expr)
+
+        if (specialSubs.isNotEmpty()) {
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Step 1 of PEMDAS: Evaluate powers, roots, logs & fractions first",
+                    specialSubs.distinct().joinToString("\n")
+                )
+            )
         }
-        steps.add(SolutionStep(steps.size + 1, "Final simplified value", finalText))
+        if (mulDivSubs.isNotEmpty() && expr !is Expr.Mul) {
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Multiply from left to right",
+                    mulDivSubs.distinct().joinToString("\n")
+                )
+            )
+        }
+
+        val lastTitle = when (expr) {
+            is Expr.Add -> "Add the terms together"
+            is Expr.Sub -> "Subtract to get the result"
+            is Expr.Mul -> "Multiply the numbers"
+            is Expr.Div -> "Divide / simplify the fraction"
+            else -> "Combine everything for the final answer"
+        }
+        steps.add(SolutionStep(steps.size + 1, lastTitle, "$originalText = $finalText"))
         return steps
     }
 
     private fun simplifySingleVarExpression(item: CompiledEquation.Expression, varName: String): SolveResult {
+        val preferDecimal = item.expr.containsDecimalLiteral()
         val poly = extractPoly2(item.expr, varName)
         if (poly != null) {
-            val formatted = formatPoly2(poly, varName)
+            val formatted = formatPoly2(poly, varName, preferDecimal)
             return SolveResult.Success(
                 summaryTitle = "Simplified Expression",
-                answers = listOf(AnswerItem(label = "Simplified", primaryValue = formatted)),
+                answers = listOf(AnswerItem(label = "Result", primaryValue = formatted)),
                 steps = listOf(
-                    SolutionStep(1, "Original expression", item.text),
-                    SolutionStep(2, "Combine like terms", formatted)
+                    SolutionStep(1, "Start with the expression", item.text),
+                    SolutionStep(2, "Group and combine like terms ($varName², $varName, and numbers)", formatted)
                 )
             )
         }
-        return SolveResult.Error("Add '= ...' to solve for $varName, or simplify polynomial terms.")
+        return SolveResult.Error("Add '= ...' to turn this into an equation we can solve for $varName.")
     }
 
     private fun solveSingleVarEquation(eq: CompiledEquation.Equation, varName: String): SolveResult {
+        val preferDecimal = eq.lhs.containsDecimalLiteral() || eq.rhs.containsDecimalLiteral()
         val steps = mutableListOf<SolutionStep>()
-        steps.add(SolutionStep(1, "Original equation", "${eq.lhsText} = ${eq.rhsText}"))
+        steps.add(SolutionStep(1, "Start with your equation", "${eq.lhsText} = ${eq.rhsText}"))
 
-        // Try symbolic polynomial (Linear or Quadratic) first
+        // Try symbolic polynomial (Linear or Quadratic)
         val lhsPoly = extractPoly2(eq.lhs, varName)
         val rhsPoly = extractPoly2(eq.rhs, varName)
         if (lhsPoly != null && rhsPoly != null) {
-            return solvePolynomialEquation(lhsPoly - rhsPoly, varName, steps)
+            return solvePolynomialBeginnerFriendly(lhsPoly, rhsPoly, eq, varName, preferDecimal, steps)
         }
 
-        // Try structural unwrapping when variable appears once in either LHS or RHS and the other side is constant
+        // Try structural unwrapping when variable appears once
         val lhsCount = eq.lhs.countVarOccurrences(varName)
         val rhsCount = eq.rhs.countVarOccurrences(varName)
         if (lhsCount == 1 && rhsCount == 0) {
             evalConstant(eq.rhs)?.let { rhsConst ->
-                tryStructuralUnwrap(eq.lhs, rhsConst, varName, steps)?.let { return it }
+                if (eq.rhs !is Expr.Const) {
+                    steps.add(
+                        SolutionStep(
+                            steps.size + 1,
+                            "Simplify the right side first",
+                            "${eq.lhsText} = ${rhsConst.formatCompact(preferDecimal)}"
+                        )
+                    )
+                }
+                tryStructuralUnwrap(eq.lhs, rhsConst, varName, preferDecimal, eq, steps)?.let { return it }
             }
         } else if (rhsCount == 1 && lhsCount == 0) {
             evalConstant(eq.lhs)?.let { lhsConst ->
-                tryStructuralUnwrap(eq.rhs, lhsConst, varName, steps)?.let { return it }
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Swap sides so $varName is on the left",
+                        "${eq.rhsText} = ${lhsConst.formatCompact(preferDecimal)}"
+                    )
+                )
+                tryStructuralUnwrap(eq.rhs, lhsConst, varName, preferDecimal, eq, steps)?.let { return it }
             }
         }
 
-        // Fallback: General numerical solver for nonlinear / multi-occurrence equations
-        return solveNumericalSingleVar(eq.lhs, eq.rhs, varName, steps)
+        return solveNumericalSingleVar(eq.lhs, eq.rhs, varName, preferDecimal, steps)
     }
 
-    private fun solvePolynomialEquation(
-        diff: Poly2,
+    private fun solvePolynomialBeginnerFriendly(
+        lhs: Poly2,
+        rhs: Poly2,
+        originalEq: CompiledEquation.Equation,
         varName: String,
+        preferDecimal: Boolean,
         steps: MutableList<SolutionStep>
     ): SolveResult {
+        val diff = lhs - rhs
         val a = diff.c2
         val b = diff.c1
         val c = diff.c0
 
-        // Standard form step
-        val stdForm = "${formatPoly2(diff, varName)} = 0"
-        steps.add(SolutionStep(steps.size + 1, "Rewrite in standard form", stdForm))
+        // Show simplified LHS = RHS if original had compound expressions
+        val lhsSimplified = formatPoly2(lhs, varName, preferDecimal)
+        val rhsSimplified = formatPoly2(rhs, varName, preferDecimal)
+        if (lhsSimplified != originalEq.lhsText || rhsSimplified != originalEq.rhsText) {
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Simplify each side separately",
+                    "$lhsSimplified = $rhsSimplified"
+                )
+            )
+        }
 
         if (a.isZero()) {
-            // Linear equation: bx + c = 0
+            // Linear equation: keep variable on left, numbers on right!
             if (b.isZero()) {
                 return if (c.isZero()) {
                     SolveResult.Success(
-                        summaryTitle = "Identity",
+                        summaryTitle = "Always True (Identity)",
                         answers = listOf(AnswerItem(varName, "All real numbers (ℝ)")),
-                        steps = steps + SolutionStep(steps.size + 1, "Conclusion", "0 = 0 is always true for every $varName.")
+                        steps = steps + SolutionStep(
+                            steps.size + 1,
+                            "Notice both sides are identical",
+                            "Everything cancels out to 0 = 0, so any value of $varName works!"
+                        )
                     )
                 } else {
                     SolveResult.Success(
                         summaryTitle = "No Solution",
                         answers = listOf(AnswerItem(varName, "No solution")),
-                        steps = steps + SolutionStep(steps.size + 1, "Conclusion", "${c.formatCompact()} = 0 is a contradiction.")
+                        steps = steps + SolutionStep(
+                            steps.size + 1,
+                            "Notice the variable cancels out",
+                            "We get ${c.formatCompact(preferDecimal)} = 0, which is impossible — so no $varName can solve this."
+                        )
                     )
                 }
             }
-            val negC = -c
-            steps.add(
-                SolutionStep(
-                    steps.size + 1,
-                    "Isolate the variable term",
-                    "${formatTerm(b, varName, first = true)} = ${negC.formatCompact()}"
+
+            val varCoeff = lhs.c1 - rhs.c1 // = b
+            val constRhs = rhs.c0 - lhs.c0 // = -c
+
+            if (!rhs.c1.isZero()) {
+                val action = if (rhs.c1.d > 0) "Subtract ${formatTerm(rhs.c1, varName, true)} from both sides" else "Add ${formatTerm(-rhs.c1, varName, true)} to both sides"
+                val leftNow = formatPoly2(Poly2(NumVal.ZERO, varCoeff, lhs.c0), varName, preferDecimal)
+                val rightNow = rhs.c0.formatCompact(preferDecimal)
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Collect $varName terms on the left ($action)",
+                        "$leftNow = $rightNow"
+                    )
                 )
-            )
-            val sol = negC / b ?: return SolveResult.Error("Division by zero.")
-            val (primary, secondary) = sol.formatExactAndApprox()
-            steps.add(
-                SolutionStep(
-                    steps.size + 1,
-                    "Divide both sides by ${b.formatCompact()}",
-                    "$varName = $primary" + (secondary?.let { " ($it)" } ?: "")
+            }
+
+            if (!lhs.c0.isZero()) {
+                val moveWord = if (lhs.c0.d > 0) "Subtract ${lhs.c0.formatCompact(preferDecimal)} from" else "Add ${(-lhs.c0).formatCompact(preferDecimal)} to"
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Move plain numbers to the right ($moveWord both sides)",
+                        "${formatTerm(varCoeff, varName, first = true)} = ${rhs.c0.formatCompact(preferDecimal)} ${if (lhs.c0.d > 0) "−" else "+"} ${NumVal(abs(lhs.c0.d), lhs.c0.r?.let { if (it.num < BigInteger.ZERO) -it else it }, lhs.c0.bd?.abs()).formatCompact(preferDecimal)} = ${constRhs.formatCompact(preferDecimal)}"
+                    )
                 )
-            )
+            }
+
+            val sol = constRhs / varCoeff ?: return SolveResult.Error("Division by zero.")
+            val (primary, secondary) = sol.formatExactAndApprox(preferDecimal)
+
+            if (!varCoeff.isOne()) {
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Get $varName alone by dividing both sides by ${varCoeff.formatCompact(preferDecimal)}",
+                        "$varName = ${constRhs.formatCompact(preferDecimal)} ÷ ${varCoeff.formatCompact(preferDecimal)} = $primary"
+                    )
+                )
+            }
+
+            // Quick verification step for beginners
+            val checkVal = originalEq.lhs.evaluateDouble(mapOf(varName to sol.d))
+            val rhsCheck = originalEq.rhs.evaluateDouble(mapOf(varName to sol.d))
+            if (!checkVal.isNaN() && !rhsCheck.isNaN()) {
+                val checkText = sol.formatCompact(preferDecimal)
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Quick check: plug $varName = $checkText back in",
+                        "Left side = ${formatNumber(checkVal)}, Right side = ${formatNumber(rhsCheck)} ✓"
+                    )
+                )
+            }
+
             return SolveResult.Success(
                 summaryTitle = "Linear Equation Solved",
                 answers = listOf(AnswerItem(varName, primary, secondary)),
                 steps = steps
             )
-        } else {
-            // Quadratic equation: ax^2 + bx + c = 0
-            val disc = (b * b) - (NumVal(4.0, Rational.of(4)) * a * c)
-            steps.add(
-                SolutionStep(
-                    steps.size + 1,
-                    "Compute discriminant Δ = b² − 4ac",
-                    "Δ = (${b.formatCompact()})² − 4(${a.formatCompact()})(${c.formatCompact()}) = ${disc.formatCompact()}"
-                )
-            )
+        }
 
-            val twoA = NumVal(2.0, Rational.of(2)) * a
-            if (abs(disc.d) < 1e-10) {
-                val root = (-b) / twoA ?: return SolveResult.Error("Division by zero.")
-                val (primary, secondary) = root.formatExactAndApprox()
+        // Quadratic equation: ax^2 + bx + c = 0
+        // Friendly Shortcut 1: Pure quadratic ax^2 + c = 0 (b == 0)
+        if (b.isZero()) {
+            val rhsConst = -c
+            val ratio = (rhsConst / a) ?: return SolveResult.Error("Division by zero.")
+            if (!a.isOne() || !c.isZero()) {
                 steps.add(
                     SolutionStep(
                         steps.size + 1,
-                        "One repeated root (Δ = 0)",
-                        "$varName = -(${b.formatCompact()}) / (2 × ${a.formatCompact()}) = $primary"
+                        "Isolate $varName² on the left side",
+                        "$varName² = ${ratio.formatCompact(preferDecimal)}"
+                    )
+                )
+            }
+            if (ratio.isZero()) {
+                steps.add(SolutionStep(steps.size + 1, "Take square root", "$varName = 0"))
+                return SolveResult.Success("Quadratic Solved", listOf(AnswerItem(varName, "0")), steps)
+            } else if (ratio.d > 0) {
+                val exactSqrt = ratio.r?.let { exactRationalRoot(it, 2) }
+                val rootVal = NumVal(sqrt(ratio.d), exactSqrt, null)
+                val (p1, s1) = rootVal.formatExactAndApprox(preferDecimal)
+                val (p2, s2) = (-rootVal).formatExactAndApprox(preferDecimal)
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Take the square root of both sides (remember both + and −!)",
+                        "$varName = ±√(${ratio.formatCompact(preferDecimal)})  ⇒  ${varName}₁ = $p1,  ${varName}₂ = $p2"
                     )
                 )
                 return SolveResult.Success(
                     summaryTitle = "Quadratic Equation Solved",
-                    answers = listOf(AnswerItem(varName, primary, secondary)),
-                    steps = steps
-                )
-            } else if (disc.d > 0) {
-                val sqrtDiscD = sqrt(disc.d)
-                val exactSqrtDiscRat = disc.r?.let { exactRationalRoot(it, 2) }
-                val sqrtDisc = NumVal(sqrtDiscD, exactSqrtDiscRat)
-                val r1 = ((-b) + sqrtDisc) / twoA
-                val r2 = ((-b) - sqrtDisc) / twoA
-                if (r1 == null || r2 == null) return SolveResult.Error("Division by zero.")
-                val (p1, s1) = r1.formatExactAndApprox()
-                val (p2, s2) = r2.formatExactAndApprox()
-                steps.add(
-                    SolutionStep(
-                        steps.size + 1,
-                        "Apply quadratic formula x = (-b ± √Δ) / 2a",
-                        "$varName₁ = $p1${s1?.let { " ($it)" } ?: ""}\n$varName₂ = $p2${s2?.let { " ($it)" } ?: ""}"
-                    )
-                )
-                return SolveResult.Success(
-                    summaryTitle = "Quadratic Equation Solved",
-                    answers = listOf(
-                        AnswerItem("${varName}₁", p1, s1),
-                        AnswerItem("${varName}₂", p2, s2)
-                    ),
-                    steps = steps
-                )
-            } else {
-                // Complex roots
-                val realPart = (-b) / twoA ?: return SolveResult.Error("Division by zero.")
-                val imagPart = NumVal(sqrt(-disc.d)) / NumVal(abs(twoA.d)) ?: return SolveResult.Error("Division by zero.")
-                val realStr = if (realPart.isZero()) "" else "${realPart.formatCompact()} "
-                val imagStr = "${imagPart.formatCompact()}i"
-                val ans1 = if (realStr.isEmpty()) imagStr else "$realStr+ $imagStr"
-                val ans2 = if (realStr.isEmpty()) "-$imagStr" else "$realStr− $imagStr"
-                steps.add(
-                    SolutionStep(
-                        steps.size + 1,
-                        "Negative discriminant (Δ < 0): complex conjugate roots",
-                        "$varName₁ = $ans1\n$varName₂ = $ans2"
-                    )
-                )
-                return SolveResult.Success(
-                    summaryTitle = "Complex Roots Found",
-                    answers = listOf(
-                        AnswerItem("${varName}₁", ans1),
-                        AnswerItem("${varName}₂", ans2)
-                    ),
+                    answers = listOf(AnswerItem("${varName}₁", p1, s1), AnswerItem("${varName}₂", p2, s2)),
                     steps = steps
                 )
             }
         }
+
+        // Friendly Shortcut 2: Missing constant term ax^2 + bx = 0 (c == 0)
+        if (c.isZero()) {
+            val root2 = (-b / a) ?: return SolveResult.Error("Division by zero.")
+            val (p2, s2) = root2.formatExactAndApprox(preferDecimal)
+            val innerFactor = formatPoly2(Poly2(NumVal.ZERO, a, b), varName, preferDecimal)
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Factor out $varName from both terms",
+                    "$varName($innerFactor) = 0"
+                )
+            )
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Set each factor equal to 0",
+                    "Either $varName = 0, or $innerFactor = 0  ⇒  $varName = $p2"
+                )
+            )
+            return SolveResult.Success(
+                summaryTitle = "Quadratic Equation Solved",
+                answers = listOf(AnswerItem("${varName}₁", "0"), AnswerItem("${varName}₂", p2, s2)),
+                steps = steps
+            )
+        }
+
+        // General Quadratic: move all terms to left side = 0
+        val stdForm = "${formatPoly2(diff, varName, preferDecimal)} = 0"
+        if (stdForm != "${originalEq.lhsText} = ${originalEq.rhsText}") {
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Move all terms to one side so it equals 0",
+                    "$stdForm\nHere a = ${a.formatCompact(preferDecimal)}, b = ${b.formatCompact(preferDecimal)}, c = ${c.formatCompact(preferDecimal)}"
+                )
+            )
+        } else {
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Identify a, b, and c from a$varName² + b$varName + c = 0",
+                    "a = ${a.formatCompact(preferDecimal)},  b = ${b.formatCompact(preferDecimal)},  c = ${c.formatCompact(preferDecimal)}"
+                )
+            )
+        }
+
+        val bSq = b * b
+        val fourAC = NumVal(4.0, Rational.of(4), BigDecimal.valueOf(4)) * a * c
+        val disc = bSq - fourAC
+        steps.add(
+            SolutionStep(
+                steps.size + 1,
+                "Check the discriminant Δ = b² − 4ac (tells us how many solutions exist)",
+                "Δ = (${b.formatCompact(preferDecimal)})² − 4(${a.formatCompact(preferDecimal)})(${c.formatCompact(preferDecimal)})\nΔ = ${bSq.formatCompact(preferDecimal)} − ${fourAC.formatCompact(preferDecimal)} = ${disc.formatCompact(preferDecimal)}"
+            )
+        )
+
+        val twoA = NumVal(2.0, Rational.of(2), BigDecimal.valueOf(2)) * a
+        if (disc.isZero()) {
+            val root = (-b) / twoA ?: return SolveResult.Error("Division by zero.")
+            val (primary, secondary) = root.formatExactAndApprox(preferDecimal)
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Since Δ = 0, there is 1 repeated solution",
+                    "$varName = -b / (2a) = ${(-b).formatCompact(preferDecimal)} / ${twoA.formatCompact(preferDecimal)} = $primary"
+                )
+            )
+            return SolveResult.Success("Quadratic Equation Solved", listOf(AnswerItem(varName, primary, secondary)), steps)
+        } else if (disc.d > 0) {
+            val sqrtDiscD = sqrt(disc.d)
+            val exactSqrtDiscRat = disc.r?.let { exactRationalRoot(it, 2) }
+            val sqrtDisc = NumVal(sqrtDiscD, exactSqrtDiscRat, exactSqrtDiscRat?.toTerminatingDecimal())
+            val r1 = ((-b) + sqrtDisc) / twoA ?: return SolveResult.Error("Division by zero.")
+            val r2 = ((-b) - sqrtDisc) / twoA ?: return SolveResult.Error("Division by zero.")
+            val (p1, s1) = r1.formatExactAndApprox(preferDecimal)
+            val (p2, s2) = r2.formatExactAndApprox(preferDecimal)
+
+            // If a == 1 and roots are clean integers, show the intuitive factored form too!
+            if (a.isOne() && r1.r?.isInteger() == true && r2.r?.isInteger() == true) {
+                val f1 = formatLinearFactor(varName, r1.r)
+                val f2 = formatLinearFactor(varName, r2.r)
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Tip: Because √Δ = ${sqrtDisc.formatCompact(preferDecimal)} is clean, this factors neatly!",
+                        "$f1$f2 = 0"
+                    )
+                )
+            }
+
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Use the quadratic formula $varName = (-b ± √Δ) / (2a)",
+                    "${varName}₁ = (${(-b).formatCompact(preferDecimal)} + ${sqrtDisc.formatCompact(preferDecimal)}) / ${twoA.formatCompact(preferDecimal)} = $p1\n" +
+                        "${varName}₂ = (${(-b).formatCompact(preferDecimal)} − ${sqrtDisc.formatCompact(preferDecimal)}) / ${twoA.formatCompact(preferDecimal)} = $p2"
+                )
+            )
+            return SolveResult.Success(
+                summaryTitle = "Quadratic Equation Solved",
+                answers = listOf(AnswerItem("${varName}₁", p1, s1), AnswerItem("${varName}₂", p2, s2)),
+                steps = steps
+            )
+        } else {
+            val realPart = (-b) / twoA ?: return SolveResult.Error("Division by zero.")
+            val imagPart = NumVal(sqrt(-disc.d)) / NumVal(abs(twoA.d)) ?: return SolveResult.Error("Division by zero.")
+            val realStr = if (realPart.isZero()) "" else "${realPart.formatCompact(preferDecimal)} "
+            val imagStr = "${imagPart.formatCompact(preferDecimal)}i"
+            val ans1 = if (realStr.isEmpty()) imagStr else "$realStr+ $imagStr"
+            val ans2 = if (realStr.isEmpty()) "-$imagStr" else "$realStr− $imagStr"
+            steps.add(
+                SolutionStep(
+                    steps.size + 1,
+                    "Since Δ < 0, there are no real roots — only complex roots (using i = √-1)",
+                    "${varName}₁ = $ans1\n${varName}₂ = $ans2"
+                )
+            )
+            return SolveResult.Success(
+                summaryTitle = "Complex Roots Found",
+                answers = listOf(AnswerItem("${varName}₁", ans1), AnswerItem("${varName}₂", ans2)),
+                steps = steps
+            )
+        }
+    }
+
+    private fun formatLinearFactor(varName: String, root: Rational): String {
+        val negRoot = -root
+        return if (negRoot.isZero()) varName
+        else if (negRoot.num > BigInteger.ZERO) "($varName + ${negRoot.format()})"
+        else "($varName − ${(-negRoot).format()})"
     }
 
     private fun tryStructuralUnwrap(
         expr: Expr,
         targetVal: NumVal,
         varName: String,
+        preferDecimal: Boolean,
+        originalEq: CompiledEquation.Equation,
         steps: MutableList<SolutionStep>
     ): SolveResult? {
         var currExpr = expr
         var currTarget = targetVal
 
-        // Keep track if we reach a branching power like (x - 1)^2 = 9
         for (guard in 0 until 20) {
             if (currExpr is Expr.Var && currExpr.name == varName) {
-                val (p, s) = currTarget.formatExactAndApprox()
+                val (p, s) = currTarget.formatExactAndApprox(preferDecimal)
+                val checkL = originalEq.lhs.evaluateDouble(mapOf(varName to currTarget.d))
+                val checkR = originalEq.rhs.evaluateDouble(mapOf(varName to currTarget.d))
+                if (!checkL.isNaN() && !checkR.isNaN()) {
+                    steps.add(
+                        SolutionStep(
+                            steps.size + 1,
+                            "Quick check: plug $varName = ${currTarget.formatCompact(preferDecimal)} back in",
+                            "Left side = ${formatNumber(checkL)}, Right side = ${formatNumber(checkR)} ✓"
+                        )
+                    )
+                }
                 return SolveResult.Success(
                     summaryTitle = "Equation Solved",
                     answers = listOf(AnswerItem(varName, p, s)),
@@ -559,20 +874,27 @@ object AlgebraSolver {
                 is Expr.Neg -> {
                     currExpr = currExpr.inner
                     currTarget = -currTarget
-                    steps.add(SolutionStep(steps.size + 1, "Multiply both sides by -1", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                    steps.add(
+                        SolutionStep(
+                            steps.size + 1,
+                            "Flip the signs (multiply both sides by -1)",
+                            "${currExpr.toMathText()} = ${currTarget.formatCompact(preferDecimal)}"
+                        )
+                    )
                 }
                 is Expr.Add -> {
                     val leftConst = evalConstant(currExpr.left)
                     val rightConst = evalConstant(currExpr.right)
-                    if (rightConst != null) {
-                        currExpr = currExpr.left
-                        currTarget -= rightConst
-                        steps.add(SolutionStep(steps.size + 1, "Subtract ${rightConst.formatCompact()} from both sides", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
-                    } else if (leftConst != null) {
-                        currExpr = currExpr.right
-                        currTarget -= leftConst
-                        steps.add(SolutionStep(steps.size + 1, "Subtract ${leftConst.formatCompact()} from both sides", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
-                    } else return null
+                    val c = rightConst ?: leftConst ?: return null
+                    currExpr = if (rightConst != null) currExpr.left else currExpr.right
+                    currTarget -= c
+                    steps.add(
+                        SolutionStep(
+                            steps.size + 1,
+                            "Undo '+ ${c.formatCompact(preferDecimal)}' by subtracting ${c.formatCompact(preferDecimal)} from both sides",
+                            "${currExpr.toMathText()} = ${currTarget.formatCompact(preferDecimal)}"
+                        )
+                    )
                 }
                 is Expr.Sub -> {
                     val leftConst = evalConstant(currExpr.left)
@@ -580,11 +902,23 @@ object AlgebraSolver {
                     if (rightConst != null) {
                         currExpr = currExpr.left
                         currTarget += rightConst
-                        steps.add(SolutionStep(steps.size + 1, "Add ${rightConst.formatCompact()} to both sides", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                        steps.add(
+                            SolutionStep(
+                                steps.size + 1,
+                                "Undo '− ${rightConst.formatCompact(preferDecimal)}' by adding ${rightConst.formatCompact(preferDecimal)} to both sides",
+                                "${currExpr.toMathText()} = ${currTarget.formatCompact(preferDecimal)}"
+                            )
+                        )
                     } else if (leftConst != null) {
                         currExpr = currExpr.right
                         currTarget = leftConst - currTarget
-                        steps.add(SolutionStep(steps.size + 1, "Isolate subtrahend", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                        steps.add(
+                            SolutionStep(
+                                steps.size + 1,
+                                "Rearrange to isolate ${currExpr.toMathText()}",
+                                "${currExpr.toMathText()} = ${leftConst.formatCompact(preferDecimal)} − ${targetVal.formatCompact(preferDecimal)} = ${currTarget.formatCompact(preferDecimal)}"
+                            )
+                        )
                     } else return null
                 }
                 is Expr.Mul -> {
@@ -594,59 +928,87 @@ object AlgebraSolver {
                     if (c.isZero()) return null
                     currExpr = if (rightConst != null) currExpr.left else currExpr.right
                     currTarget = (currTarget / c) ?: return null
-                    steps.add(SolutionStep(steps.size + 1, "Divide both sides by ${c.formatCompact()}", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                    steps.add(
+                        SolutionStep(
+                            steps.size + 1,
+                            "Undo multiplying by ${c.formatCompact(preferDecimal)} — divide both sides by ${c.formatCompact(preferDecimal)}",
+                            "${currExpr.toMathText()} = ${currTarget.formatCompact(preferDecimal)}"
+                        )
+                    )
                 }
                 is Expr.Div -> {
                     val rightConst = evalConstant(currExpr.right)
                     val leftConst = evalConstant(currExpr.left)
                     if (rightConst != null) {
                         if (rightConst.isZero()) return null
+                        val prevTarget = currTarget.formatCompact(preferDecimal)
                         currExpr = currExpr.left
                         currTarget *= rightConst
-                        steps.add(SolutionStep(steps.size + 1, "Multiply both sides by ${rightConst.formatCompact()}", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                        steps.add(
+                            SolutionStep(
+                                steps.size + 1,
+                                "Clear the fraction by multiplying both sides by ${rightConst.formatCompact(preferDecimal)}",
+                                "${currExpr.toMathText()} = $prevTarget × ${rightConst.formatCompact(preferDecimal)} = ${currTarget.formatCompact(preferDecimal)}"
+                            )
+                        )
                     } else if (leftConst != null) {
                         if (currTarget.isZero()) {
                             return SolveResult.Success(
                                 summaryTitle = "No Solution",
                                 answers = listOf(AnswerItem(varName, "No solution")),
-                                steps = steps + SolutionStep(steps.size + 1, "Analyze fraction", "A fraction with non-zero numerator cannot equal 0.")
+                                steps = steps + SolutionStep(steps.size + 1, "Check fraction rule", "A fraction with non-zero top (${leftConst.formatCompact(preferDecimal)}) can never equal 0.")
                             )
                         }
                         currExpr = currExpr.right
                         currTarget = (leftConst / currTarget) ?: return null
-                        steps.add(SolutionStep(steps.size + 1, "Cross-multiply to solve for denominator", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                        steps.add(
+                            SolutionStep(
+                                steps.size + 1,
+                                "Multiply both sides by the denominator and divide",
+                                "${currExpr.toMathText()} = ${currTarget.formatCompact(preferDecimal)}"
+                            )
+                        )
                     } else return null
                 }
                 is Expr.Root -> {
-                    val deg = currExpr.degree?.let { evalConstant(it) } ?: NumVal(2.0, Rational.of(2))
+                    val deg = currExpr.degree?.let { evalConstant(it) } ?: NumVal(2.0, Rational.of(2), BigDecimal.valueOf(2))
                     val degInt = deg.d.roundToLong()
                     val isInt = abs(deg.d - degInt) < 1e-10 && degInt >= 1L
                     if (isInt && degInt % 2L == 0L && currTarget.d < 0.0) {
                         return SolveResult.Success(
                             summaryTitle = "No Real Solution",
                             answers = listOf(AnswerItem(varName, "No real solution")),
-                            steps = steps + SolutionStep(steps.size + 1, "Check radical domain", "An even root cannot equal a negative number (${currTarget.formatCompact()}).")
+                            steps = steps + SolutionStep(steps.size + 1, "Check even root rule", "An even root (like √) can never give a negative result (${currTarget.formatCompact(preferDecimal)}).")
                         )
                     }
-                    val raised = evalConstant(Expr.Pow(Expr.Const(currTarget.d, currTarget.r), Expr.Const(deg.d, deg.r))) ?: return null
+                    val prevText = currTarget.formatCompact(preferDecimal)
+                    val raised = evalConstant(Expr.Pow(Expr.Const(currTarget.d, currTarget.r, currTarget.bd), Expr.Const(deg.d, deg.r, deg.bd))) ?: return null
                     currExpr = currExpr.radicand
                     currTarget = raised
-                    steps.add(SolutionStep(steps.size + 1, "Raise both sides to the power of ${deg.formatCompact()}", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                    val actionTitle = if (degInt == 2L) "Undo the square root by squaring both sides" else "Undo the ${deg.formatCompact(preferDecimal)}th root by raising both sides to power ${deg.formatCompact(preferDecimal)}"
+                    steps.add(
+                        SolutionStep(
+                            steps.size + 1,
+                            actionTitle,
+                            "${currExpr.toMathText()} = ($prevText)^${deg.formatCompact(preferDecimal)} = ${currTarget.formatCompact(preferDecimal)}"
+                        )
+                    )
                 }
                 is Expr.Log -> {
                     val baseConst = evalConstant(currExpr.base) ?: return null
                     if (baseConst.d <= 0.0 || abs(baseConst.d - 1.0) < 1e-10) {
                         return SolveResult.Error("Logarithm base must be positive and not equal to 1.")
                     }
-                    val prevTargetText = currTarget.formatCompact()
-                    val raised = evalConstant(Expr.Pow(Expr.Const(baseConst.d, baseConst.r), Expr.Const(currTarget.d, currTarget.r))) ?: return null
+                    val prevTargetText = currTarget.formatCompact(preferDecimal)
+                    val raised = evalConstant(Expr.Pow(Expr.Const(baseConst.d, baseConst.r, baseConst.bd), Expr.Const(currTarget.d, currTarget.r, currTarget.bd))) ?: return null
                     currExpr = currExpr.arg
                     currTarget = raised
+                    val baseDisplay = (currExpr as? Expr.Const)?.symbolName ?: baseConst.formatCompact(preferDecimal)
                     steps.add(
                         SolutionStep(
                             steps.size + 1,
-                            "Rewrite logarithm in exponential form",
-                            "${currExpr.toMathText()} = ${baseConst.formatCompact()}^($prevTargetText) = ${raised.formatCompact()}"
+                            "Rewrite log in power form (rule: if log_b(A) = C, then A = b^C)",
+                            "${currExpr.toMathText()} = $baseDisplay^($prevTargetText) = ${raised.formatCompact(preferDecimal)}"
                         )
                     )
                 }
@@ -661,18 +1023,18 @@ object AlgebraSolver {
                             return SolveResult.Success(
                                 summaryTitle = "No Real Solution",
                                 answers = listOf(AnswerItem(varName, "No real solution")),
-                                steps = steps + SolutionStep(steps.size + 1, "Check exponential range", "${baseConst.formatCompact()}^(...) is always positive, so it cannot equal ${currTarget.formatCompact()}.")
+                                steps = steps + SolutionStep(steps.size + 1, "Check positive powers", "${baseConst.formatCompact(preferDecimal)} raised to any real power is always positive, so it cannot equal ${currTarget.formatCompact(preferDecimal)}.")
                             )
                         }
-                        val prevTargetText = currTarget.formatCompact()
-                        val logged = evalConstant(Expr.Log(Expr.Const(baseConst.d, baseConst.r), Expr.Const(currTarget.d, currTarget.r))) ?: return null
+                        val prevTargetText = currTarget.formatCompact(preferDecimal)
+                        val logged = evalConstant(Expr.Log(Expr.Const(baseConst.d, baseConst.r, baseConst.bd), Expr.Const(currTarget.d, currTarget.r, currTarget.bd))) ?: return null
                         currExpr = currExpr.exp
                         currTarget = logged
                         steps.add(
                             SolutionStep(
                                 steps.size + 1,
-                                "Take log base ${baseConst.formatCompact()} of both sides",
-                                "${currExpr.toMathText()} = log_${baseConst.formatCompact()}($prevTargetText) = ${logged.formatCompact()}"
+                                "Use log base ${baseConst.formatCompact(preferDecimal)} to bring down the exponent",
+                                "${currExpr.toMathText()} = log_${baseConst.formatCompact(preferDecimal)}($prevTargetText) = ${logged.formatCompact(preferDecimal)}"
                             )
                         )
                     } else if (expConst != null && baseConst == null) {
@@ -684,21 +1046,21 @@ object AlgebraSolver {
                                     return SolveResult.Success(
                                         summaryTitle = "No Real Solution",
                                         answers = listOf(AnswerItem(varName, "No real solution")),
-                                        steps = steps + SolutionStep(steps.size + 1, "Check even power", "Even power cannot equal negative number ${currTarget.formatCompact()}.")
+                                        steps = steps + SolutionStep(steps.size + 1, "Check even power", "An even power cannot equal a negative number (${currTarget.formatCompact(preferDecimal)}).")
                                     )
                                 }
-                                val rootPos = evalConstant(Expr.Root(Expr.Const(expConst.d, expConst.r), Expr.Const(currTarget.d, currTarget.r))) ?: return null
+                                val rootPos = evalConstant(Expr.Root(Expr.Const(expConst.d, expConst.r, expConst.bd), Expr.Const(currTarget.d, currTarget.r, currTarget.bd))) ?: return null
                                 if (rootPos.isZero()) {
                                     currExpr = currExpr.base
                                     currTarget = NumVal.ZERO
-                                    steps.add(SolutionStep(steps.size + 1, "Take ${expInt}th root", "${currExpr.toMathText()} = 0"))
+                                    steps.add(SolutionStep(steps.size + 1, "Take ${expInt}th root of both sides", "${currExpr.toMathText()} = 0"))
                                 } else {
                                     val branchSteps1 = steps.toMutableList()
-                                    branchSteps1.add(SolutionStep(branchSteps1.size + 1, "Take ±${expInt}th root (Branch 1)", "${currExpr.base.toMathText()} = ${rootPos.formatCompact()}"))
-                                    val res1 = tryStructuralUnwrap(currExpr.base, rootPos, varName, branchSteps1)
+                                    branchSteps1.add(SolutionStep(branchSteps1.size + 1, "Undo power $expInt (Positive branch)", "${currExpr.base.toMathText()} = +${rootPos.formatCompact(preferDecimal)}"))
+                                    val res1 = tryStructuralUnwrap(currExpr.base, rootPos, varName, preferDecimal, originalEq, branchSteps1)
                                     val branchSteps2 = mutableListOf<SolutionStep>()
-                                    branchSteps2.add(SolutionStep(1, "Take ±${expInt}th root (Branch 2)", "${currExpr.base.toMathText()} = ${(-rootPos).formatCompact()}"))
-                                    val res2 = tryStructuralUnwrap(currExpr.base, -rootPos, varName, branchSteps2)
+                                    branchSteps2.add(SolutionStep(1, "Undo power $expInt (Negative branch)", "${currExpr.base.toMathText()} = ${(-rootPos).formatCompact(preferDecimal)}"))
+                                    val res2 = tryStructuralUnwrap(currExpr.base, -rootPos, varName, preferDecimal, originalEq, branchSteps2)
                                     if (res1 is SolveResult.Success && res2 is SolveResult.Success) {
                                         val answers = listOf(
                                             res1.answers.first().copy(label = "${varName}₁"),
@@ -710,10 +1072,17 @@ object AlgebraSolver {
                                     return null
                                 }
                             } else {
-                                val rootVal = evalConstant(Expr.Root(Expr.Const(expConst.d, expConst.r), Expr.Const(currTarget.d, currTarget.r))) ?: return null
+                                val prevText = currTarget.formatCompact(preferDecimal)
+                                val rootVal = evalConstant(Expr.Root(Expr.Const(expConst.d, expConst.r, expConst.bd), Expr.Const(currTarget.d, currTarget.r, currTarget.bd))) ?: return null
                                 currExpr = currExpr.base
                                 currTarget = rootVal
-                                steps.add(SolutionStep(steps.size + 1, "Take ${expInt}th root of both sides", "${currExpr.toMathText()} = ${currTarget.formatCompact()}"))
+                                steps.add(
+                                    SolutionStep(
+                                        steps.size + 1,
+                                        "Undo power $expInt by taking the ${expInt}th root of both sides",
+                                        "${currExpr.toMathText()} = ${expInt}√($prevText) = ${currTarget.formatCompact(preferDecimal)}"
+                                    )
+                                )
                             }
                         } else return null
                     } else return null
@@ -726,7 +1095,7 @@ object AlgebraSolver {
 
     private fun extractPoly2(expr: Expr, varName: String): Poly2? {
         return when (expr) {
-            is Expr.Const -> Poly2(NumVal.ZERO, NumVal.ZERO, NumVal(expr.value, expr.rational))
+            is Expr.Const -> Poly2(NumVal.ZERO, NumVal.ZERO, NumVal.fromExprConst(expr))
             is Expr.Var -> if (expr.name == varName) Poly2(NumVal.ZERO, NumVal.ONE, NumVal.ZERO) else null
             is Expr.Neg -> extractPoly2(expr.inner, varName)?.unaryMinus()
             is Expr.Add -> {
@@ -776,6 +1145,7 @@ object AlgebraSolver {
         lhs: Expr,
         rhs: Expr,
         varName: String,
+        preferDecimal: Boolean,
         steps: MutableList<SolutionStep>
     ): SolveResult {
         fun f(v: Double): Double {
@@ -788,7 +1158,6 @@ object AlgebraSolver {
 
         val samples = mutableListOf<Double>()
         for (i in -200..200) samples.add(i * 0.5)
-        // Dense positive samples for log/root domains
         for (i in 1..200) samples.add(i * 0.05)
         for (i in 1..10) samples.add(10.0.pow(i.toDouble() * 0.3) * 0.001)
         val sortedSamples = samples.distinct().sorted()
@@ -825,18 +1194,12 @@ object AlgebraSolver {
                         addRootIfValid(mid)
                         break
                     }
-                    if (flo * fmid <= 0.0) {
-                        hi = mid
-                    } else {
-                        lo = mid
-                        flo = fmid
-                    }
+                    if (flo * fmid <= 0.0) hi = mid else { lo = mid; flo = fmid }
                 }
                 addRootIfValid(0.5 * (lo + hi))
             }
         }
 
-        // Newton refinement from select seeds for tangent roots
         val seeds = listOf(-10.0, -2.0, -0.5, 0.25, 0.5, 1.0, 2.0, 4.0, 10.0, 25.0, 100.0)
         for (seed in seeds) {
             var x = seed
@@ -860,8 +1223,8 @@ object AlgebraSolver {
         if (foundRoots.isEmpty()) {
             return SolveResult.Success(
                 summaryTitle = "No Real Solution Found",
-                answers = listOf(AnswerItem(varName, "No real solution in search range")),
-                steps = steps + SolutionStep(steps.size + 1, "Domain & root check", "No real value of $varName satisfies LHS = RHS.")
+                answers = listOf(AnswerItem(varName, "No real solution")),
+                steps = steps + SolutionStep(steps.size + 1, "Check values", "Tested across real numbers; no $varName makes both sides equal.")
             )
         }
 
@@ -870,11 +1233,19 @@ object AlgebraSolver {
             val label = if (sorted.size == 1) varName else "${varName}${subscriptNumber(index + 1)}"
             AnswerItem(label, formatNumber(r))
         }
+        val firstAns = sorted.first()
         steps.add(
             SolutionStep(
                 steps.size + 1,
-                "Solve numerically & verify LHS = RHS",
+                "Find the value(s) of $varName where Left Side = Right Side",
                 answers.joinToString("\n") { "${it.label} = ${it.primaryValue}" }
+            )
+        )
+        steps.add(
+            SolutionStep(
+                steps.size + 1,
+                "Quick check at $varName = ${formatNumber(firstAns)}",
+                "Left side = ${formatNumber(lhs.evaluateDouble(mapOf(varName to firstAns)))}, Right side = ${formatNumber(rhs.evaluateDouble(mapOf(varName to firstAns)))} ✓"
             )
         )
         return SolveResult.Success("Equation Solved", answers, steps)
@@ -885,12 +1256,17 @@ object AlgebraSolver {
         entries: List<EquationEntry>,
         vars: List<String>
     ): SolveResult {
+        val preferDecimal = compiled.any {
+            when (it) {
+                is CompiledEquation.Equation -> it.lhs.containsDecimalLiteral() || it.rhs.containsDecimalLiteral()
+                is CompiledEquation.Expression -> it.expr.containsDecimalLiteral()
+            }
+        }
         val steps = mutableListOf<SolutionStep>()
-        val eqListText = entries.mapIndexed { idx, e -> "Eq ${idx + 1}: ${e.root.toReadableString()}" }
+        val eqListText = entries.mapIndexed { idx, e -> "(${idx + 1}) ${e.root.toReadableString()}" }
             .joinToString("\n")
-        steps.add(SolutionStep(1, "System of ${vars.size} equations (${vars.joinToString(", ")})", eqListText))
+        steps.add(SolutionStep(1, "We have ${vars.size} equations for ${vars.size} unknowns (${vars.joinToString(", ")})", eqListText))
 
-        // Ensure all entries are equations with '='
         val eqPairs = mutableListOf<Pair<Expr, Expr>>()
         for ((idx, item) in compiled.withIndex()) {
             when (item) {
@@ -899,7 +1275,6 @@ object AlgebraSolver {
             }
         }
 
-        // Try exact linear system extraction
         val linearRows = eqPairs.map { (lhs, rhs) ->
             val l = extractLinear(lhs, vars)
             val r = extractLinear(rhs, vars)
@@ -907,18 +1282,16 @@ object AlgebraSolver {
         }
 
         if (linearRows.all { it != null }) {
-            val rows = linearRows.filterNotNull()
-            return solveLinearSystem(rows, vars, steps)
+            return solveLinearSystemBeginnerFriendly(linearRows.filterNotNull(), vars, preferDecimal, eqPairs, steps)
         }
 
-        // Fallback: Nonlinear system via multi-start Newton-Raphson
         return solveNonlinearSystem(eqPairs, vars, steps)
     }
 
     private fun extractLinear(expr: Expr, vars: List<String>): LinearExpr? {
         val zeroCoeffs = List(vars.size) { NumVal.ZERO }
         return when (expr) {
-            is Expr.Const -> LinearExpr(zeroCoeffs, NumVal(expr.value, expr.rational))
+            is Expr.Const -> LinearExpr(zeroCoeffs, NumVal.fromExprConst(expr))
             is Expr.Var -> {
                 val idx = vars.indexOf(expr.name)
                 if (idx == -1) return null
@@ -950,23 +1323,36 @@ object AlgebraSolver {
                 val rConst = evalConstant(expr.right) ?: return null
                 if (rConst.isZero()) return null
                 val l = extractLinear(expr.left, vars) ?: return null
-                val inv = NumVal(1.0 / rConst.d, rConst.r?.let { Rational.ONE / it })
+                val inv = NumVal.ONE / rConst ?: return null
                 l.scale(inv)
             }
-            is Expr.Pow, is Expr.Log, is Expr.Root -> {
-                evalConstant(expr)?.let { LinearExpr(zeroCoeffs, it) }
-            }
+            is Expr.Pow, is Expr.Log, is Expr.Root -> evalConstant(expr)?.let { LinearExpr(zeroCoeffs, it) }
         }
     }
 
-    private fun solveLinearSystem(
+    private fun formatLinearEq(coeffs: List<NumVal>, rhs: NumVal, vars: List<String>, preferDecimal: Boolean): String {
+        val lhsStr = buildString {
+            var first = true
+            for (j in vars.indices) {
+                val coef = coeffs[j]
+                if (!coef.isZero()) {
+                    append(formatTerm(coef, vars[j], first, preferDecimal))
+                    first = false
+                }
+            }
+        }.ifEmpty { "0" }
+        return "$lhsStr = ${rhs.formatCompact(preferDecimal)}"
+    }
+
+    private fun solveLinearSystemBeginnerFriendly(
         rows: List<LinearExpr>,
         vars: List<String>,
+        preferDecimal: Boolean,
+        eqPairs: List<Pair<Expr, Expr>>,
         steps: MutableList<SolutionStep>
     ): SolveResult {
         val n = vars.size
         val m = rows.size
-        // Build augmented matrix [A | b] where each row represents a1*x + a2*y + ... = b
         val matrix = Array(m) { r ->
             Array(n + 1) { c ->
                 if (c < n) rows[r].coeffs[c] else -rows[r].constant
@@ -974,24 +1360,11 @@ object AlgebraSolver {
         }
 
         val stdFormText = rows.mapIndexed { idx, row ->
-            val lhsStr = buildString {
-                var first = true
-                for (j in 0 until n) {
-                    val coef = row.coeffs[j]
-                    if (!coef.isZero() || (j == n - 1 && first)) {
-                        append(formatTerm(coef, vars[j], first))
-                        first = false
-                    }
-                }
-            }.ifEmpty { "0" }
-            val rhsVal = -row.constant
-            "(${idx + 1}) $lhsStr = ${rhsVal.formatCompact()}"
+            "(${idx + 1}) ${formatLinearEq(row.coeffs, -row.constant, vars, preferDecimal)}"
         }.joinToString("\n")
-        steps.add(SolutionStep(steps.size + 1, "Standard linear form", stdFormText))
+        steps.add(SolutionStep(steps.size + 1, "Write each equation neatly (variables on left, number on right)", stdFormText))
 
         var pivotRow = 0
-        val pivotCols = IntArray(m) { -1 }
-
         for (col in 0 until n) {
             if (pivotRow >= m) break
             var bestRow = pivotRow
@@ -1001,39 +1374,52 @@ object AlgebraSolver {
                 }
             }
             if (matrix[bestRow][col].isZero()) continue
-
             if (bestRow != pivotRow) {
-                val tmp = matrix[pivotRow]
-                matrix[pivotRow] = matrix[bestRow]
-                matrix[bestRow] = tmp
+                val tmp = matrix[pivotRow]; matrix[pivotRow] = matrix[bestRow]; matrix[bestRow] = tmp
             }
 
             val pivotVal = matrix[pivotRow][col]
             for (c in col..n) {
                 matrix[pivotRow][c] = (matrix[pivotRow][c] / pivotVal)
-                    ?: return SolveResult.Error("Numerical division error during elimination.")
+                    ?: return SolveResult.Error("Division error while solving system.")
             }
 
+            val eliminatedNotes = mutableListOf<String>()
             for (r in 0 until m) {
                 if (r != pivotRow && !matrix[r][col].isZero()) {
                     val factor = matrix[r][col]
                     for (c in col..n) {
                         matrix[r][c] = matrix[r][c] - (factor * matrix[pivotRow][c])
                     }
+                    if (r > pivotRow) {
+                        val rowCoeffs = (0 until n).map { matrix[r][it] }
+                        eliminatedNotes.add("(${r + 1}) ${formatLinearEq(rowCoeffs, matrix[r][n], vars, preferDecimal)}")
+                    }
                 }
             }
-            pivotCols[pivotRow] = col
+            if (eliminatedNotes.isNotEmpty()) {
+                steps.add(
+                    SolutionStep(
+                        steps.size + 1,
+                        "Eliminate '${vars[col]}' from the remaining equation(s)",
+                        eliminatedNotes.joinToString("\n")
+                    )
+                )
+            }
             pivotRow++
         }
 
-        // Check inconsistency (0 = nonzero)
         for (r in 0 until m) {
             val allZeroCoeffs = (0 until n).all { matrix[r][it].isZero() }
             if (allZeroCoeffs && !matrix[r][n].isZero()) {
                 return SolveResult.Success(
                     summaryTitle = "No Solution",
-                    answers = listOf(AnswerItem("System", "Inconsistent (no solution)")),
-                    steps = steps + SolutionStep(steps.size + 1, "Row reduction result", "Elimination produced 0 = ${matrix[r][n].formatCompact()}, so the system has no solution.")
+                    answers = listOf(AnswerItem("System", "No solution (parallel equations)")),
+                    steps = steps + SolutionStep(
+                        steps.size + 1,
+                        "Contradiction found",
+                        "Eliminating variables gave 0 = ${matrix[r][n].formatCompact(preferDecimal)}, which is impossible."
+                    )
                 )
             }
         }
@@ -1041,19 +1427,43 @@ object AlgebraSolver {
         if (pivotRow < n) {
             return SolveResult.Success(
                 summaryTitle = "Infinitely Many Solutions",
-                answers = listOf(AnswerItem("System", "Dependent (infinitely many solutions)")),
-                steps = steps + SolutionStep(steps.size + 1, "Row reduction result", "Equations are linearly dependent (rank $pivotRow < $n variables).")
+                answers = listOf(AnswerItem("System", "Infinitely many solutions")),
+                steps = steps + SolutionStep(
+                    steps.size + 1,
+                    "Equations overlap",
+                    "One equation is a combination of the others, leaving infinitely many valid answers."
+                )
             )
         }
 
-        val rrefText = (0 until n).joinToString("\n") { r ->
-            val (p, s) = matrix[r][n].formatExactAndApprox()
-            "${vars[r]} = $p${s?.let { " ($it)" } ?: ""}"
+        // Show friendly back-substitution steps from last variable up to first
+        val backSubLines = mutableListOf<String>()
+        for (r in n - 1 downTo 0) {
+            val (p, s) = matrix[r][n].formatExactAndApprox(preferDecimal)
+            val valStr = if (s != null) "$p ($s)" else p
+            if (r == n - 1) {
+                backSubLines.add("Solve directly: ${vars[r]} = $valStr")
+            } else {
+                val knownList = (r + 1 until n).joinToString(", ") { k -> "${vars[k]} = ${matrix[k][n].formatCompact(preferDecimal)}" }
+                backSubLines.add("Plug in $knownList  ⇒  ${vars[r]} = $valStr")
+            }
         }
-        steps.add(SolutionStep(steps.size + 1, "Gaussian elimination & back-substitution", rrefText))
+        steps.add(
+            SolutionStep(
+                steps.size + 1,
+                "Back-substitute to find each variable",
+                backSubLines.joinToString("\n")
+            )
+        )
+
+        val env = vars.indices.associate { vars[it] to matrix[it][n].d }
+        val checkLines = eqPairs.mapIndexed { idx, (l, r) ->
+            "Eq (${idx + 1}): ${formatNumber(l.evaluateDouble(env))} = ${formatNumber(r.evaluateDouble(env))} ✓"
+        }
+        steps.add(SolutionStep(steps.size + 1, "Quick check in every equation", checkLines.joinToString("\n")))
 
         val answers = (0 until n).map { r ->
-            val (p, s) = matrix[r][n].formatExactAndApprox()
+            val (p, s) = matrix[r][n].formatExactAndApprox(preferDecimal)
             AnswerItem(vars[r], p, s)
         }
 
@@ -1105,7 +1515,6 @@ object AlgebraSolver {
                     converged = true
                     break
                 }
-                // Jacobian (use first n equations)
                 val jac = Array(n) { DoubleArray(n) }
                 var jacOk = true
                 for (j in 0 until n) {
@@ -1113,13 +1522,8 @@ object AlgebraSolver {
                     x[j] += h
                     val fp = evalResidual(x)
                     x[j] -= h
-                    if (fp == null) {
-                        jacOk = false
-                        break
-                    }
-                    for (i in 0 until n) {
-                        jac[i][j] = (fp[i] - f0[i]) / h
-                    }
+                    if (fp == null) { jacOk = false; break }
+                    for (i in 0 until n) jac[i][j] = (fp[i] - f0[i]) / h
                 }
                 if (!jacOk) break
                 val delta = solveSmallLinearDouble(jac, DoubleArray(n) { -f0[it] }) ?: break
@@ -1132,7 +1536,7 @@ object AlgebraSolver {
                     steps.add(
                         SolutionStep(
                             steps.size + 1,
-                            "Solve nonlinear system numerically",
+                            "Find values satisfying all equations together",
                             answers.joinToString("\n") { "${it.label} = ${it.primaryValue}" }
                         )
                     )
@@ -1166,30 +1570,30 @@ object AlgebraSolver {
         return DoubleArray(n) { aug[it][n] }
     }
 
-    private fun formatPoly2(poly: Poly2, varName: String): String {
+    private fun formatPoly2(poly: Poly2, varName: String, preferDecimal: Boolean = true): String {
         val parts = mutableListOf<String>()
         if (!poly.c2.isZero()) {
-            parts.add(formatTerm(poly.c2, "$varName²", first = true))
+            parts.add(formatTerm(poly.c2, "$varName²", first = true, preferDecimal = preferDecimal))
         }
         if (!poly.c1.isZero()) {
-            parts.add(formatTerm(poly.c1, varName, first = parts.isEmpty()))
+            parts.add(formatTerm(poly.c1, varName, first = parts.isEmpty(), preferDecimal = preferDecimal))
         }
         if (!poly.c0.isZero() || parts.isEmpty()) {
             if (parts.isEmpty()) {
-                parts.add(poly.c0.formatCompact())
+                parts.add(poly.c0.formatCompact(preferDecimal))
             } else {
                 val sign = if (poly.c0.d < 0) " − " else " + "
                 val mag = if (poly.c0.d < 0) -poly.c0 else poly.c0
-                parts.add("$sign${mag.formatCompact()}")
+                parts.add("$sign${mag.formatCompact(preferDecimal)}")
             }
         }
         return parts.joinToString("")
     }
 
-    private fun formatTerm(coef: NumVal, symbol: String, first: Boolean): String {
+    private fun formatTerm(coef: NumVal, symbol: String, first: Boolean, preferDecimal: Boolean = true): String {
         val isNeg = coef.d < 0
         val mag = if (isNeg) -coef else coef
-        val coefText = if (mag.isOne()) "" else mag.formatCompact()
+        val coefText = if (mag.isOne()) "" else mag.formatCompact(preferDecimal)
         return if (first) {
             if (isNeg) "-$coefText$symbol" else "$coefText$symbol"
         } else {
