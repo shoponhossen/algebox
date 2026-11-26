@@ -68,7 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.R
+import shopon.openstudy.algesolver.R
 import com.example.model.EquationEntry
 import com.example.model.extractVariables
 import com.example.solver.SolveResult
@@ -99,7 +99,7 @@ fun AlgebraSolverScreen(
                             .fillMaxHeight()
                             .windowInsetsPadding(WindowInsets.statusBars)
                     ) {
-                        AlgeBoxTopBar(
+                        AlgeSolverTopBar(
                             onClearAll = viewModel::onClearAll,
                             isKeyboardVisible = uiState.isKeyboardVisible,
                             onToggleKeyboard = { viewModel.onToggleKeyboard() }
@@ -137,7 +137,7 @@ fun AlgebraSolverScreen(
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.statusBars)
                 ) {
-                    AlgeBoxTopBar(
+                    AlgeSolverTopBar(
                         onClearAll = viewModel::onClearAll,
                         isKeyboardVisible = uiState.isKeyboardVisible,
                         onToggleKeyboard = { viewModel.onToggleKeyboard() }
@@ -215,7 +215,7 @@ fun AlgebraSolverScreen(
 }
 
 @Composable
-private fun AlgeBoxTopBar(
+private fun AlgeSolverTopBar(
     onClearAll: () -> Unit,
     isKeyboardVisible: Boolean,
     onToggleKeyboard: () -> Unit

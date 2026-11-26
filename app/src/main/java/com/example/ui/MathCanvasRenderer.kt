@@ -49,7 +49,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
+import shopon.openstudy.algesolver.R
 import com.example.model.EditorCursor
 import com.example.model.FractionNode
 import com.example.model.LogNode

@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "AlgeBox"
+rootProject.name = "AlgeSolver"
 
 include(":app")

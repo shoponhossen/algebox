@@ -7,7 +7,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.example.R
+import shopon.openstudy.algesolver.R
 
 val PlusJakartaSans = FontFamily(
     Font(R.font.plus_jakarta_sans, FontWeight.Normal),
@@ -28,7 +28,7 @@ val MathMonoFont = FontFamily(
     Font(R.font.jetbrains_mono, FontWeight.SemiBold)
 )
 
-val AlgeBoxTypography = Typography(
+val AlgeSolverTypography = Typography(
     headlineMedium = TextStyle(
         fontFamily = PlusJakartaSans,
         fontWeight = FontWeight.Bold,

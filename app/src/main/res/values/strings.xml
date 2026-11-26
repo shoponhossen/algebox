@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">AlgeBox</string>
+    <string name="app_name">AlgeSolver</string>
     <string name="app_subtitle">Visual Algebra Solver</string>
     <string name="equation_label">Equation %1$d</string>
     <string name="add_equation">Add Equation %1$d</string>

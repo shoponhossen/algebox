@@ -55,7 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import com.example.R
+import shopon.openstudy.algesolver.R
 import com.example.model.MathTemplate
 import com.example.ui.theme.MathSerifFont
 

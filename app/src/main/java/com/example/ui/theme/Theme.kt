@@ -64,14 +64,14 @@ private val DarkColorScheme = darkColorScheme(
     outlineVariant = DarkOutline
 )
 
-val AlgeBoxShapes = Shapes(
+val AlgeSolverShapes = Shapes(
     small = RoundedCornerShape(10.dp),
     medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(22.dp)
 )
 
 @Composable
-fun AlgeBoxTheme(
+fun AlgeSolverTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
@@ -79,8 +79,8 @@ fun AlgeBoxTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = AlgeBoxTypography,
-        shapes = AlgeBoxShapes,
+        typography = AlgeSolverTypography,
+        shapes = AlgeSolverShapes,
         content = content
     )
 }
