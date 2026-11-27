@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -40,7 +41,6 @@ import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
-import androidx.compose.material.icons.rounded.Functions
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material3.Button
@@ -59,8 +59,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -99,7 +100,7 @@ fun AlgebraSolverScreen(
                             .fillMaxHeight()
                             .windowInsetsPadding(WindowInsets.statusBars)
                     ) {
-                        AlgeSolverTopBar(
+                        WorkspaceActionBar(
                             onClearAll = viewModel::onClearAll,
                             isKeyboardVisible = uiState.isKeyboardVisible,
                             onToggleKeyboard = { viewModel.onToggleKeyboard() }
@@ -137,7 +138,7 @@ fun AlgebraSolverScreen(
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.statusBars)
                 ) {
-                    AlgeSolverTopBar(
+                    WorkspaceActionBar(
                         onClearAll = viewModel::onClearAll,
                         isKeyboardVisible = uiState.isKeyboardVisible,
                         onToggleKeyboard = { viewModel.onToggleKeyboard() }
@@ -215,18 +216,11 @@ fun AlgebraSolverScreen(
 }
 
 @Composable
-private fun AlgeSolverTopBar(
+private fun WorkspaceActionBar(
     onClearAll: () -> Unit,
     isKeyboardVisible: Boolean,
     onToggleKeyboard: () -> Unit
 ) {
-    val headerBrush = Brush.horizontalGradient(
-        colors = listOf(
-            MaterialTheme.colorScheme.primary,
-            MaterialTheme.colorScheme.secondary
-        )
-    )
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -238,20 +232,14 @@ private fun AlgeSolverTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Box(
+            Image(
+                painter = painterResource(id = R.drawable.ic_algebox_logo_1795532687770),
+                contentDescription = stringResource(R.string.app_name),
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(headerBrush),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Functions,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
+                    .clip(RoundedCornerShape(10.dp))
+            )
             Column {
                 Text(
                     text = stringResource(R.string.app_name),
@@ -266,7 +254,10 @@ private fun AlgeSolverTopBar(
             }
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             IconButton(
                 onClick = onToggleKeyboard,
                 modifier = Modifier.testTag("topbar_toggle_keyboard")

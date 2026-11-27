@@ -302,8 +302,8 @@ private fun PowerNodeView(
     scale: Float,
     onTapSlot: (slotId: String, indexInSlot: Int?) -> Unit
 ) {
-    val expScale = (scale * 0.68f).coerceAtLeast(0.48f)
-    val gapPx = with(LocalDensity.current) { (2f * scale).dp.roundToPx() }
+    val expScale = (scale * 0.60f).coerceAtLeast(0.45f)
+    val gapPx = with(LocalDensity.current) { (1.5f * scale).dp.roundToPx() }
 
     Layout(
         content = {
@@ -331,7 +331,7 @@ private fun PowerNodeView(
         val basePlaceable = measurables[0].measure(loose)
         val expPlaceable = measurables[1].measure(loose)
 
-        val expLift = max(0, (expPlaceable.height * 0.65f).roundToInt() - (basePlaceable.height * 0.25f).roundToInt())
+        val expLift = (expPlaceable.height * 0.62f).roundToInt()
         val totalWidth = basePlaceable.width + gapPx + expPlaceable.width
         val totalHeight = max(expLift + basePlaceable.height, expPlaceable.height)
 

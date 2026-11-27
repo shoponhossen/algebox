@@ -652,28 +652,30 @@ private fun PowerPreview(
     expText: String?
 ) {
     Row(verticalAlignment = Alignment.Top) {
-        Box(modifier = Modifier.padding(top = 5.dp)) {
+        Box(modifier = Modifier.padding(top = 8.dp)) {
             if (baseBox) {
                 MiniBox(13)
             } else {
                 Text(
                     text = baseText,
                     fontSize = 14.sp,
+                    lineHeight = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
         }
-        Spacer(Modifier.width(2.dp))
+        Spacer(Modifier.width(1.5.dp))
         if (expText != null) {
             Text(
                 text = expText,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
             )
         } else {
-            MiniBox(9)
+            MiniBox(8)
         }
     }
 }
